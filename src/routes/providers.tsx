@@ -60,7 +60,7 @@ function ProvidersPage() {
           ]}
           onEdit={(p) => setEditing({ value: p, originalId: p.id })}
           onDelete={(p) => {
-            if (profiles.some((pr) => pr.providerId === p.id)) return toast.error("A profile still references this provider");
+            if (profiles.some((pr) => pr.providerId === p.id)) { toast.error("A profile still references this provider"); return; }
             actions.deleteProvider(p.id);
           }}
         />

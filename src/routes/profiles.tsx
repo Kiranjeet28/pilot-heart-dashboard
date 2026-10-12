@@ -62,7 +62,7 @@ function ProfilesPage() {
           ]}
           onEdit={(p) => setEditing({ value: p, originalId: p.id })}
           onDelete={(p) => {
-            if (tasks.some((t) => t.profileId === p.id && ["queued", "planning", "running", "waiting_for_approval", "paused"].includes(t.status))) return toast.error("An active task uses this profile");
+            if (tasks.some((t) => t.profileId === p.id && ["queued", "planning", "running", "waiting_for_approval", "paused"].includes(t.status))) { toast.error("An active task uses this profile"); return; }
             actions.deleteProfile(p.id);
           }}
         />

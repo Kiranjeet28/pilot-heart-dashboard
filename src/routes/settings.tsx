@@ -51,11 +51,11 @@ function SettingsPage() {
           </div>
           <div className="space-y-2">
             <div className="flex justify-between text-sm"><span>Simulated action failure rate</span><span className="font-mono text-xs">{Math.round(settings.failureRate * 100)}%</span></div>
-            <Slider min={0} max={50} step={5} value={[Math.round(settings.failureRate * 100)]} onValueChange={([v]) => actions.updateSettings({ failureRate: v / 100 })} />
+            <Slider min={0} max={50} step={5} value={[Math.round(settings.failureRate * 100)]} onValueChange={([v = 0]) => actions.updateSettings({ failureRate: v / 100 })} />
           </div>
           <div className="space-y-2">
             <div className="flex justify-between text-sm"><span>Step delay</span><span className="font-mono text-xs">{settings.stepDelayMs} ms</span></div>
-            <Slider min={300} max={4000} step={100} value={[settings.stepDelayMs]} onValueChange={([v]) => actions.updateSettings({ stepDelayMs: v })} />
+            <Slider min={300} max={4000} step={100} value={[settings.stepDelayMs]} onValueChange={([v = 1200]) => actions.updateSettings({ stepDelayMs: v })} />
           </div>
           <Button variant="outline" onClick={health} disabled={checking}>{checking ? "Checking…" : "Run health check"}</Button>
         </div>
