@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { EmptyState } from "./panel";
 import { TaskStatusBadge } from "./status-badge";
 
-export function TaskHistory({ tasks, limit, onSelect, selectedId }: { tasks: Task[]; limit?: number; onSelect?: (id: string) => void; selectedId?: string }) {
+export function TaskHistory({ tasks, limit, onSelect, selectedId }: { tasks: Task[]; limit?: number; onSelect?: (id: string) => void; selectedId?: string | undefined }) {
   const list = limit ? tasks.slice(0, limit) : tasks;
   if (!list.length) return <EmptyState title="No tasks yet" hint="Create a task in the composer to get started." />;
   return (

@@ -8,7 +8,7 @@ import { Progress } from "@/components/ui/progress";
 import { Panel, EmptyState } from "./panel";
 import { TaskStatusBadge, SimulatedTag } from "./status-badge";
 
-export function CurrentTask({ task }: { task?: Task }) {
+export function CurrentTask({ task }: { task?: Task | undefined }) {
   const providers = useAppState((s) => s.providers);
   const profiles = useAppState((s) => s.profiles);
   const targets = useAppState((s) => s.targets);

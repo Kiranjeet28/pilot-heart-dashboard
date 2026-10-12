@@ -5,7 +5,7 @@ import { useAppState } from "@/store/app-store";
 import { Panel } from "./panel";
 import { SimulatedTag } from "./status-badge";
 
-export function ScreenshotPanel({ task }: { task?: Task }) {
+export function ScreenshotPanel({ task }: { task?: Task | undefined }) {
   const worker = useAppState((s) => s.settings.workerSimulation);
   const obs = task?.lastObservation;
   return (

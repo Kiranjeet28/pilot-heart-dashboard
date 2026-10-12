@@ -19,7 +19,7 @@ export type FieldDef<T> = {
   validate?: (value: unknown, all: T) => string | undefined;
 };
 
-export function EntityFormDialog<T extends Record<string, unknown>>({
+export function EntityFormDialog<T extends object>({
   open, onOpenChange, title, description, fields, initial, onSubmit,
 }: {
   open: boolean;
@@ -58,7 +58,7 @@ export function EntityFormDialog<T extends Record<string, unknown>>({
             {description ? <DialogDescription>{description}</DialogDescription> : null}
           </DialogHeader>
           {fields.map((f) => {
-            const v = value[f.name];
+            const v = value[f.name] as unknown;
             const id = `f-${f.name}`;
             return (
               <div key={f.name} className="space-y-1.5">
