@@ -32,7 +32,7 @@ function SettingsPage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-4">
-      <PageHeader title="Settings" description="Control the demo environment and safety state." />
+      <PageHeader title="Settings" description="Choose DEMO or REAL LOCAL, pair the Windows worker, and manage safety." />
       <WorkerModePanel />
       {mode === "real_local" ? (
         <>
