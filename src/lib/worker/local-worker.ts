@@ -83,7 +83,7 @@ export class LocalHttpWorker implements DesktopWorker {
     if (auth) {
       const t = this.opts.getToken();
       if (!t) throw new WorkerRequestError("not_paired", diagnose("not_paired", port));
-      headers.Authorization = `Bearer ${t}`; // header only — never in the URL
+      headers["Authorization"] = `Bearer ${t}`; // header only — never in the URL
     }
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -93,7 +93,7 @@ export class LocalHttpWorker implements DesktopWorker {
       res = await f(`http://127.0.0.1:${port}${path}`, {
         method,
         headers,
-        body: body === undefined ? undefined : JSON.stringify(body),
+        body: body === undefined ? null : JSON.stringify(body),
         signal: ctrl.signal,
         mode: "cors",
         credentials: "omit",
