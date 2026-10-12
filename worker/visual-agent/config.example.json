@@ -1,0 +1,14 @@
+{
+  "$comment": "Copy to config.json. No secrets belong in this file — the signing key lives in Windows Credential Manager.",
+  "port": 8765,
+  "allowed_origins": [
+    "https://id-preview--ef2a5cdf-f610-41bd-b196-f077beea0c96.lovable.app",
+    "http://localhost:8080"
+  ],
+  "session_ttl_hours": 12,
+  "action_timeout_s": 15,
+  "observe_timeout_s": 10,
+  "max_observation_age_s": 60,
+  "max_image_width": 1600,
+  "log_file": null
+}

@@ -1,0 +1,7 @@
+fastapi>=0.110,<1
+uvicorn>=0.29,<1
+pydantic>=2.6,<3
+pyautogui==0.9.54
+pyperclip>=1.8,<2
+keyring>=24,<26
+pillow>=10,<12
