@@ -14,7 +14,8 @@ export function TaskComposer() {
   const targets = useAppState((s) => s.targets);
   useAppState((s) => s.tasks); // re-evaluate readiness on task changes
   useAppState((s) => s.emergencyStop);
-  useAppState((s) => s.settings);
+  const mode = useAppState((s) => s.settings.workerMode);
+  useAppState((s) => s.connection);
 
   const [description, setDescription] = useState("");
   const [providerId, setProviderId] = useState("");
@@ -42,7 +43,7 @@ export function TaskComposer() {
     }
     setIssues([]);
     setDescription("");
-    toast.success(start ? "Task started in demo mode" : "Draft saved");
+    toast.success(start ? (mode === "demo" ? "Task started in demo mode" : "Task started on the real local worker") : "Draft saved");
   }
 
   return (
@@ -93,7 +94,7 @@ export function TaskComposer() {
         ) : null}
 
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="font-mono text-[11px] text-muted-foreground">Runs against the mock worker. No real desktop actions.</p>
+          <p className="font-mono text-[11px] text-muted-foreground">{mode === "demo" ? "Runs against the mock worker. No real desktop actions." : "REAL LOCAL: tasks only capture screenshots of your desktop in this milestone."}</p>
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => submit(false)}><Save className="h-4 w-4" /> Save draft</Button>
             <Button onClick={() => submit(true)} disabled={live.length > 0}><Play className="h-4 w-4" /> Start Task</Button>

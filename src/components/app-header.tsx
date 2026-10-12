@@ -8,12 +8,25 @@ import { toast } from "sonner";
 export function AppHeader() {
   const worker = useAppState((s) => s.settings.workerSimulation);
   const estop = useAppState((s) => s.emergencyStop);
+  const mode = useAppState((s) => s.settings.workerMode);
+  const conn = useAppState((s) => s.connection);
   return (
     <header className="sticky top-0 z-20 flex h-12 items-center gap-3 border-b bg-background/90 px-3 backdrop-blur">
       <SidebarTrigger />
       <div className="flex items-center gap-2">
-        <Pill tone="warning">DEMO MODE · simulated worker</Pill>
-        <Pill tone={worker === "connected" ? "success" : "destructive"}>worker: {worker === "connected" ? "mock connected" : "disconnected"}</Pill>
+        {mode === "demo" ? (
+          <>
+            <Pill tone="warning">DEMO MODE · simulated worker</Pill>
+            <Pill tone={worker === "connected" ? "success" : "destructive"}>worker: {worker === "connected" ? "mock connected" : "disconnected"}</Pill>
+          </>
+        ) : (
+          <>
+            <Pill tone="destructive">REAL LOCAL MODE</Pill>
+            <Pill tone={conn.state === "connected" ? (conn.stopped ? "warning" : "success") : conn.state === "busy" || conn.state === "pairing" ? "info" : conn.state === "error" ? "destructive" : "muted"}>
+              worker: {conn.state}{conn.stopped ? " · stopped" : ""}
+            </Pill>
+          </>
+        )}
       </div>
       <div className="ml-auto flex items-center gap-2">
         {estop ? (
