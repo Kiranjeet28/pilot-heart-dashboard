@@ -19,4 +19,4 @@ export const DEFAULT_TARGETS: DesktopTarget[] = [
   { id: "browser-chat", displayName: "Browser AI chat", kind: "browser_chat", launchPath: "", windowTitleContains: "Chat", processName: "msedge.exe", interactionMode: "observe_only" },
 ];
 
-export const DEFAULT_SETTINGS: AppSettings = { workerSimulation: "connected", failureRate: 0.1, stepDelayMs: 1200 };
+export const DEFAULT_SETTINGS: AppSettings = { workerSimulation: "connected", failureRate: 0.1, stepDelayMs: 1200, workerMode: "demo", workerPort: 8765 };

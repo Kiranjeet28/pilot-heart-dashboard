@@ -51,7 +51,15 @@ export type TaskStatus =
   | "failed"
   | "cancelled";
 
-export type ActionKind = "focus_window" | "read_screen" | "click" | "type_text" | "key_press" | "wait";
+export type ActionKind =
+  | "focus_window"
+  | "read_screen"
+  | "click"
+  | "type_text"
+  | "key_press"
+  | "wait"
+  | "copy_selection"
+  | "paste";
 
 export interface ActionRequest {
   kind: ActionKind;
@@ -62,6 +70,8 @@ export interface ActionRequest {
   y?: number;
   keys?: string;
   durationMs?: number;
+  /** Required by the real worker for coordinate actions (fresh observation). */
+  observationId?: string;
 }
 
 export interface PlannedStep {
@@ -82,6 +92,8 @@ export interface ActivityEvent {
   message: string;
   /** True when produced by the mock worker / demo planner — never a real desktop action. */
   simulated: boolean;
+  /** True only for actions executed by the REAL local Windows worker. */
+  real?: boolean;
 }
 
 export interface Task {
@@ -100,13 +112,17 @@ export interface Task {
   retries: number;
   summary?: string;
   error?: string;
-  lastObservation?: { imageDataUrl: string; capturedAt: number; simulated: boolean };
+  lastObservation?: { imageDataUrl: string; capturedAt: number; simulated: boolean; width?: number; height?: number; observationId?: string };
 }
 
 export type WorkerSimulation = "connected" | "disconnected";
+/** Which DesktopWorker implementation the dashboard uses. */
+export type WorkerSelection = "demo" | "real_local";
 
 export interface AppSettings {
   workerSimulation: WorkerSimulation;
   failureRate: number; // 0-0.5 chance a simulated action fails
   stepDelayMs: number;
+  workerMode: WorkerSelection;
+  workerPort: number;
 }
