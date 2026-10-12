@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import type { TaskStatus } from "@/lib/types";
 import { STATUS_LABEL } from "@/lib/tasks/state-machine";
@@ -32,7 +33,7 @@ export function SimulatedTag({ className }: { className?: string }) {
   );
 }
 
-export function Pill({ tone = "muted", children }: { tone?: "muted" | "success" | "warning" | "destructive" | "info"; children: React.ReactNode }) {
+export function Pill({ tone = "muted", children }: { tone?: "muted" | "success" | "warning" | "destructive" | "info"; children: ReactNode }) {
   const t = {
     muted: "border-border text-muted-foreground",
     success: "border-success/40 text-success",

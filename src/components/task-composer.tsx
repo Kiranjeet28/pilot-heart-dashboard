@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { AlertTriangle, Play, Save } from "lucide-react";
 import { toast } from "sonner";
 import { actions, useAppState } from "@/store/app-store";
@@ -104,7 +104,7 @@ export function TaskComposer() {
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="space-y-1.5">
       <Label className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">{label}</Label>

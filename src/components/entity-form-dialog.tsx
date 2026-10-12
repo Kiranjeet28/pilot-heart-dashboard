@@ -1,5 +1,5 @@
 // Generic data-driven form dialog used by the provider, profile and target registries.
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,7 +34,7 @@ export function EntityFormDialog<T extends Record<string, unknown>>({
   const [errors, setErrors] = useState<Record<string, string>>({});
   useEffect(() => { if (open) { setValue(initial); setErrors({}); } }, [open, initial]);
 
-  function submit(e: React.FormEvent) {
+  function submit(e: FormEvent) {
     e.preventDefault();
     const errs: Record<string, string> = {};
     for (const f of fields) {
