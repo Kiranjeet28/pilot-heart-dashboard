@@ -202,7 +202,7 @@ export const actions = {
       hydrated: true,
     };
     listeners.forEach((l) => l());
-    if (restored.some((t, i) => t.status !== tasks[i].status)) log(null, "warning", "Dashboard reloaded — in-flight tasks were paused");
+    if (restored.some((t, i) => t.status !== tasks[i]?.status)) log(null, "warning", "Dashboard reloaded — in-flight tasks were paused");
   },
 
   readiness(i: Omit<NewTaskInput, "description">) {

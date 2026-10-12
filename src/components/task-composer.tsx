@@ -23,8 +23,8 @@ export function TaskComposer() {
   const [issues, setIssues] = useState<string[]>([]);
 
   useEffect(() => {
-    if (!providerId && providers.length) setProviderId(providers.find((p) => p.enabled)?.id ?? providers[0].id);
-    if (!targetId && targets.length) setTargetId(targets[0].id);
+    if (!providerId && providers.length) setProviderId(providers.find((p) => p.enabled)?.id ?? providers[0]!.id);
+    if (!targetId && targets.length) setTargetId(targets[0]!.id);
   }, [providers, targets, providerId, targetId]);
 
   const providerProfiles = profiles.filter((p) => p.providerId === providerId);
