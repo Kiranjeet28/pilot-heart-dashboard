@@ -90,7 +90,12 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
-  useEffect(() => actions.hydrate(), []);
+  useEffect(() => {
+    actions.hydrate();
+    void actions.refreshConnection();
+    const h = setInterval(() => void actions.refreshConnection(), 15000);
+    return () => clearInterval(h);
+  }, []);
   return (
     <QueryClientProvider client={queryClient}>
       <SidebarProvider>

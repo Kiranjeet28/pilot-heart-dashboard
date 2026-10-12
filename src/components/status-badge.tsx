@@ -33,6 +33,14 @@ export function SimulatedTag({ className }: { className?: string }) {
   );
 }
 
+export function RealTag({ className }: { className?: string }) {
+  return (
+    <span className={cn("rounded border border-destructive/50 bg-destructive/10 px-1.5 py-px font-mono text-[10px] uppercase tracking-wider text-destructive", className)}>
+      Real desktop
+    </span>
+  );
+}
+
 export function Pill({ tone = "muted", children }: { tone?: "muted" | "success" | "warning" | "destructive" | "info"; children: ReactNode }) {
   const t = {
     muted: "border-border text-muted-foreground",

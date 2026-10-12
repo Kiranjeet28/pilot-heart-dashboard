@@ -18,3 +18,16 @@ export function planDemoSteps(description: string, target: DesktopTarget): Plann
     { id: sid(), requiresApproval: false, action: { kind: "read_screen", targetId: t, description: "Capture result" } },
   ];
 }
+
+/**
+ * REAL LOCAL mode plan (Milestone 2): observation only. Input actions on the real
+ * desktop are limited to the guided Notepad test until AI planning lands.
+ */
+export function planRealObserveSteps(target: DesktopTarget): PlannedStep[] {
+  const t = target.id;
+  return [
+    { id: sid(), requiresApproval: false, action: { kind: "read_screen", targetId: t, description: "Capture real desktop screenshot" } },
+    { id: sid(), requiresApproval: false, action: { kind: "wait", targetId: t, durationMs: 1000, description: "Wait 1 second" } },
+    { id: sid(), requiresApproval: false, action: { kind: "read_screen", targetId: t, description: "Capture follow-up screenshot" } },
+  ];
+}

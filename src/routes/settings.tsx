@@ -8,16 +8,18 @@ import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
 import { Panel, PageHeader } from "@/components/panel";
-import { Pill } from "@/components/status-badge";
+import { WorkerModePanel, PairingPanel, SetupGuide } from "@/components/worker-setup";
+import { NotepadTestPanel } from "@/components/notepad-test";
 
 export const Route = createFileRoute("/settings")({
-  head: () => pageMeta("Settings", "Demo mode, mock worker simulation and safety controls."),
+  head: () => pageMeta("Settings", "Worker mode, local worker pairing, setup guide and safety controls."),
   component: SettingsPage,
 });
 
 function SettingsPage() {
   const settings = useAppState((s) => s.settings);
   const estop = useAppState((s) => s.emergencyStop);
+  const mode = useAppState((s) => s.settings.workerMode);
   const [checking, setChecking] = useState(false);
 
   async function health() {
@@ -30,16 +32,16 @@ function SettingsPage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-4">
-      <PageHeader title="Settings" description="Control the demo environment and safety state." />
-      <Panel title="Mode">
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-medium">Demo mode</p>
-            <p className="text-xs text-muted-foreground">Locked on. A real local Windows worker is not available in this milestone.</p>
-          </div>
-          <Pill tone="warning">DEMO · {worker.mode}</Pill>
-        </div>
-      </Panel>
+      <PageHeader title="Settings" description="Choose DEMO or REAL LOCAL, pair the Windows worker, and manage safety." />
+      <WorkerModePanel />
+      {mode === "real_local" ? (
+        <>
+          <PairingPanel />
+          <NotepadTestPanel />
+        </>
+      ) : null}
+      <SetupGuide />
+      {mode === "demo" ? (
       <Panel title="Mock worker">
         <div className="space-y-5">
           <div className="flex items-center justify-between">
@@ -60,6 +62,7 @@ function SettingsPage() {
           <Button variant="outline" onClick={health} disabled={checking}>{checking ? "Checking…" : "Run health check"}</Button>
         </div>
       </Panel>
+      ) : null}
       <Panel title="Safety">
         <div className="flex items-center justify-between">
           <div>

@@ -2,7 +2,7 @@ import type { ActivityEvent } from "@/lib/types";
 import { fmtTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { EmptyState } from "./panel";
-import { SimulatedTag } from "./status-badge";
+import { RealTag, SimulatedTag } from "./status-badge";
 
 const DOT: Record<ActivityEvent["kind"], string> = {
   info: "bg-info",
@@ -27,6 +27,7 @@ export function ActivityTimeline({ events, limit, showTask }: { events: Activity
             <p className={cn("text-sm", e.kind === "error" && "text-destructive", e.kind === "safety" && "font-medium text-destructive")}>{e.message}</p>
             <div className="mt-0.5 flex items-center gap-2">
               {e.simulated ? <SimulatedTag /> : null}
+              {e.real ? <RealTag /> : null}
               {showTask && e.taskId ? <span className="font-mono text-[10px] text-muted-foreground">{e.taskId}</span> : null}
             </div>
           </div>
