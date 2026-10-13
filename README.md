@@ -149,6 +149,7 @@ See the detailed table in [`worker/visual-agent/README.md`](worker/visual-agent/
 | Symptom | Fix |
 | --- | --- |
 | `No signing key found` | Run `python -m desktoppilot_worker setup` |
+| `Port 8765 is already in use` | Close the other worker window, or free it: `Get-NetTCPConnection -LocalPort 8765 -State Listen \| Select-Object -ExpandProperty OwningProcess` then `Stop-Process -Id <that number>` |
 | Dashboard: "Could not reach the worker" | Worker running? Port matches Settings? Exact page origin in `allowed_origins` (restart after editing)? Local-network access allowed? On Safari, use local development |
 | `origin_not_allowed` in the worker log | Add the logged origin to `allowed_origins` and restart |
 | 401 "rejected the session" | Token expired or key rotated — restart the worker and pair again |
