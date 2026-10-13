@@ -25,7 +25,21 @@ Allowed actions are `click` (needs a fresh observation, bounds-checked), `type_t
 ctrl+a/c/v/z, shift+home/end), `copy_selection` (returns only length + hash, never the text), `paste`, and `wait` (≤10 s).
 There is **no** shell, Python execution, file access, password or cookie access.
 
-## Install (PowerShell)
+## Start (one command)
+
+From the project root, run the start script — it creates the environment, installs
+dependencies, frees the port from a previous helper run, and starts the helper:
+
+```powershell
+cd path\to\pilot-heart-dashboard
+.\start-worker.ps1
+```
+
+(Or, inside Git Bash/WSL on Windows, or on Linux/macOS: `bash start-worker.sh`.)
+
+The first run takes a minute or two to install dependencies; later runs start immediately.
+
+## Manual install (PowerShell, if you prefer doing it by hand)
 
 Requires Python 3.11+ from python.org (tick "Add python.exe to PATH").
 

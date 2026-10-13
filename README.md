@@ -46,6 +46,15 @@ npm run build      # production build
 
 ## 2. Run the local worker (Windows)
 
+Easiest way — one command from the project root. It creates the Python environment,
+installs dependencies, frees port 8765 from a previous helper run, and starts the helper:
+
+```powershell
+.\start-worker.ps1        # or: bash start-worker.sh (Git Bash/WSL/Linux/macOS)
+```
+
+Manual setup, if you prefer doing it by hand:
+
 ```powershell
 cd worker\visual-agent
 py -3 -m venv .venv
