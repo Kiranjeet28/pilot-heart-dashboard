@@ -94,6 +94,38 @@ Invoke-RestMethod http://127.0.0.1:8765/health
 Stop behaviour: press **Stop** (or the header **Emergency Stop**) while the test runs — remaining steps are not
 sent, and the worker answers `423 worker_stopped` until the emergency stop is reset.
 
+## AI task planning (Gemini, Module 3)
+
+Task planning calls `POST /api/tasks/plan` (registered in `src/routes/api/tasks/plan.ts` →
+`src/lib/server/task-plan.ts`).
+
+- Configure a Gemini key as the server-side secret/env var `GEMINI_API_KEY` (never `VITE_*`,
+  never in browser code). Optionally set `GEMINI_MODEL` (default `gemini-2.5-flash`). See
+  `.env.example`.
+- Security: the route accepts only (a) same-origin browser requests that positively prove it —
+  matching `Origin`/`Referer` (or `Sec-Fetch-Site: same-origin` plus a matching header) — or
+  (b) internal clients presenting `Authorization: Bearer <DESKTOPPILOT_SERVER_TOKEN>`.
+  Requests without origin evidence are rejected; bodies are capped at 64 KB and limited to
+  30 planning requests per origin per minute.
+- The server prompt pins the selected desktop target ID, and both the server and the client
+  planner (`normalizeProviderPlan`) reject steps that target another desktop, use a
+  non-allowlisted action, exceed 12 steps, or use `text_match` verification without
+  `expectedText`. Schemas: `worker_ok` and `screen_capture` always; `clipboard` for copy steps.
+- Verification: `screen_capture` needs a real screenshot; `text_match` compares
+  `expectedText` with text the worker returns. When the worker supplies no text (OCR is a
+  later extension), the step is recorded as **unverified** — never silently passed — and
+  execution continues without retry. Only genuine failures trigger the bounded 2-retry loop;
+  tasks also honor a global 10-minute deadline.
+
+### Acceptance test (real Gemini + real worker)
+
+1. Set `GEMINI_API_KEY`, start and pair the worker (sections 2–3 above), keep the dashboard on
+   **REAL LOCAL** with the target's interaction mode set to *assisted* or *autonomous*.
+2. Create a task such as "Open Notepad and type DesktopPilot test 123" on the target, and start it.
+3. Expected: a Gemini plan appears, steps run one at a time on the real desktop with approval
+   prompts for input actions, and the task ends `completed` only if every verification passed
+   (or was honestly recorded as unverified).
+
 ## Security model
 
 - The worker binds to `127.0.0.1` only; `Host` and `Origin` headers are checked against an allowlist (no `*`).

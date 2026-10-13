@@ -359,12 +359,13 @@ async function tick(id: string) {
         ok: result.ok,
         message: result.message,
         result: obs?.imageDataUrl,
+        ...(result.text ? { text: result.text } : {}),
         ...(result.data ? { data: result.data } : {}),
       },
       step.verification,
     );
     if (getTask(id)?.status !== "verifying") return;
-    if (verification.status !== "passed") {
+    if (verification.status === "failed") {
       patchTask(id, {
         verification: {
           status: verification.status,
@@ -380,6 +381,21 @@ async function tick(id: string) {
         return schedule(id);
       }
       return fail(id, `${verification.reason} after 2 verification retries`);
+    }
+    if (verification.status === "unverified") {
+      patchTask(id, {
+        verification: {
+          status: "unverified",
+          reason: verification.reason,
+          checkedAt: Date.now(),
+        },
+      });
+      log(
+        id,
+        "warning",
+        `${verification.reason} Recorded as unverified — continuing without retry.`,
+        sim,
+      );
     }
     const next = t.currentStep + 1;
     transition(id, "running");
@@ -398,7 +414,11 @@ async function tick(id: string) {
             },
           }
         : {}),
-      verification: { status: "passed", reason: verification.reason, checkedAt: Date.now() },
+      verification: {
+        status: verification.status,
+        reason: verification.reason,
+        checkedAt: Date.now(),
+      },
       lastVerifiedResult: verification.evidence ?? verification.reason,
       currentAction: undefined,
     });
