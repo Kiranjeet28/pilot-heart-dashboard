@@ -388,8 +388,9 @@ async function generateDirectGeminiPlan(input: TaskPlanRequestInput): Promise<Pr
 
 export async function generateGeminiTaskPlan(input: TaskPlanRequestInput): Promise<ProviderResult> {
   const apiKey = process.env["LOVABLE_API_KEY"]?.trim();
-  if (!apiKey) {
-    // Local run: fall back to the user's own Gemini key.
+  // A missing or placeholder gateway key means a local run: use the user's own
+  // Gemini key directly instead of the Lovable gateway.
+  if (!apiKey || apiKey === "your-key-here") {
     return generateDirectGeminiPlan(input);
   }
   const model = resolveGatewayModel(input.modelOverride);
