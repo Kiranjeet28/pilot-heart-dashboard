@@ -407,3 +407,15 @@ describe("secure AI task-plan endpoint", () => {
     expect(isRateLimited("rate-test-origin-2", 30, 60_000, Date.now() + 61_000)).toBe(false);
   });
 });
+
+import { toGeminiResponseSchema } from "@/lib/server/task-plan";
+describe("Gemini direct schema", () => {
+  it("removes additionalProperties at every level", () => {
+    const out = toGeminiResponseSchema({
+      type: "object",
+      additionalProperties: false,
+      properties: { a: { type: "object", additionalProperties: false, properties: {} } },
+    });
+    expect(JSON.stringify(out)).not.toContain("additionalProperties");
+  });
+});
