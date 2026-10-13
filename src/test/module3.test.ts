@@ -101,6 +101,31 @@ describe("task manager and verification", () => {
     expect(result[0]?.requiresApproval).toBe(true);
   });
 
+  it('normalizes the "win" key spelling to "windows" in planned key presses', () => {
+    const result = normalizeProviderPlan(
+      {
+        ok: true,
+        plan: ["Open Run dialog"],
+        summary: "Open Run dialog",
+        steps: [
+          {
+            action: {
+              kind: "key_press",
+              targetId: "vscode",
+              keys: "win+r",
+              description: "Open the Run dialog",
+            },
+            requiresApproval: false,
+            verification: { kind: "worker_ok" },
+          },
+        ],
+      },
+      DEFAULT_TARGETS[0]!,
+      ["key_press"],
+    );
+    expect(result[0]?.action).toMatchObject({ kind: "key_press", keys: "windows+r" });
+  });
+
   it("does not treat a failed worker result as verified", () => {
     const result = verifyActionOutcome(
       { kind: "click", targetId: "vscode", x: 1, y: 1, description: "Click" },
