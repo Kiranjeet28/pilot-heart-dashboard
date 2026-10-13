@@ -171,7 +171,7 @@ export function toGeminiResponseSchema(schema: unknown): unknown {
   if (schema && typeof schema === "object") {
     const out: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(schema as Record<string, unknown>)) {
-      if (key === "additionalProperties") continue;
+      if (key === "additionalProperties" || key === "maxItems") continue;
       out[key] = toGeminiResponseSchema(value);
     }
     return out;
@@ -344,7 +344,8 @@ async function generateDirectGeminiPlan(input: TaskPlanRequestInput): Promise<Pr
           systemInstruction: {
             parts: [
               {
-                text: "You plan safe desktop automation steps for DesktopPilot. Respond only with JSON matching the requested schema.",
+                text: "You plan safe desktop automation steps for DesktopPilot. Respond only with JSON matching this JSON schema (at most 12 steps): " +
+                  JSON.stringify(GEMINI_RESPONSE_SCHEMA),
               },
             ],
           },
@@ -353,7 +354,6 @@ async function generateDirectGeminiPlan(input: TaskPlanRequestInput): Promise<Pr
             temperature: 0.2,
             maxOutputTokens: MAX_PLAN_TOKENS,
             responseMimeType: "application/json",
-            responseSchema: GEMINI_RESPONSE_SCHEMA,
           },
         }),
         signal: controller.signal,
@@ -441,7 +441,8 @@ export async function generateGeminiTaskPlan(input: TaskPlanRequestInput): Promi
           {
             role: "system",
             content:
-              "You plan safe desktop automation steps for DesktopPilot. Respond only with JSON matching the requested schema.",
+              "You plan safe desktop automation steps for DesktopPilot. Respond only with JSON matching this JSON schema (at most 12 steps): " +
+                  JSON.stringify(GEMINI_RESPONSE_SCHEMA),
           },
           { role: "user", content: buildPrompt(input) },
         ],
