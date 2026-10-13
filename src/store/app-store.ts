@@ -310,9 +310,9 @@ async function tick(id: string) {
       );
       return;
     }
-    if (step.requiresApproval && !step.approved) {
+    if (!t.planApproved && t.steps.some((x) => x.requiresApproval)) {
       transition(id, "waiting_for_approval");
-      log(id, "approval", `Approval required: ${step.action.description}`);
+      log(id, "approval", `Approval required once for the whole plan (${t.steps.length} steps)`);
       return;
     }
     let action = step.action;
@@ -583,15 +583,16 @@ export const actions = {
     if (!t || t.status !== "waiting_for_approval") return;
     if (isReal()) set({ realActionsConfirmed: true });
     patchTask(id, {
-      steps: t.steps.map((s, i) => (i === t.currentStep ? { ...s, approved: true } : s)),
+      planApproved: true,
+      steps: t.steps.map((s) => ({ ...s, approved: true })),
     });
     transition(id, "running");
-    log(id, "approval", "Step approved by user", false);
+    log(id, "approval", "Plan approved by user — task will run without further prompts", false);
     schedule(id, 300);
   },
 
   reject(id: string) {
-    actions.cancel(id, "Step rejected by user — task cancelled");
+    actions.cancel(id, "Plan rejected by user — task cancelled");
   },
 
   retry(id: string) {
