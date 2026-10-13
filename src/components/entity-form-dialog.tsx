@@ -1,12 +1,25 @@
 // Generic data-driven form dialog used by the provider, profile and target registries.
 import { useEffect, useState, type FormEvent } from "react";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 export type FieldDef<T> = {
   name: keyof T & string;
@@ -20,7 +33,13 @@ export type FieldDef<T> = {
 };
 
 export function EntityFormDialog<T extends object>({
-  open, onOpenChange, title, description, fields, initial, onSubmit,
+  open,
+  onOpenChange,
+  title,
+  description,
+  fields,
+  initial,
+  onSubmit,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
@@ -32,7 +51,12 @@ export function EntityFormDialog<T extends object>({
 }) {
   const [value, setValue] = useState<T>(initial);
   const [errors, setErrors] = useState<Record<string, string>>({});
-  useEffect(() => { if (open) { setValue(initial); setErrors({}); } }, [open, initial]);
+  useEffect(() => {
+    if (open) {
+      setValue(initial);
+      setErrors({});
+    }
+  }, [open, initial]);
 
   function submit(e: FormEvent) {
     e.preventDefault();
@@ -65,31 +89,58 @@ export function EntityFormDialog<T extends object>({
                 {f.type === "switch" ? (
                   <div className="flex items-center justify-between">
                     <Label htmlFor={id}>{f.label}</Label>
-                    <Switch id={id} checked={Boolean(v)} onCheckedChange={(c) => setField(f.name, c)} />
+                    <Switch
+                      id={id}
+                      checked={Boolean(v)}
+                      onCheckedChange={(c) => setField(f.name, c)}
+                    />
                   </div>
                 ) : (
                   <>
                     <Label htmlFor={id}>{f.label}</Label>
                     {f.type === "text" ? (
-                      <Input id={id} value={String(v ?? "")} placeholder={f.placeholder} className={f.mono ? "font-mono" : undefined} onChange={(e) => setField(f.name, e.target.value)} />
+                      <Input
+                        id={id}
+                        value={String(v ?? "")}
+                        placeholder={f.placeholder}
+                        className={f.mono ? "font-mono" : undefined}
+                        onChange={(e) => setField(f.name, e.target.value)}
+                      />
                     ) : f.type === "textarea" ? (
-                      <Textarea id={id} value={String(v ?? "")} placeholder={f.placeholder} onChange={(e) => setField(f.name, e.target.value)} />
+                      <Textarea
+                        id={id}
+                        value={String(v ?? "")}
+                        placeholder={f.placeholder}
+                        onChange={(e) => setField(f.name, e.target.value)}
+                      />
                     ) : (
                       <Select value={String(v ?? "")} onValueChange={(nv) => setField(f.name, nv)}>
-                        <SelectTrigger id={id}><SelectValue placeholder={f.placeholder ?? "Select…"} /></SelectTrigger>
+                        <SelectTrigger id={id}>
+                          <SelectValue placeholder={f.placeholder ?? "Select…"} />
+                        </SelectTrigger>
                         <SelectContent>
-                          {(f.options ?? []).map((o) => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                          {(f.options ?? []).map((o) => (
+                            <SelectItem key={o.value} value={o.value}>
+                              {o.label}
+                            </SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     )}
                   </>
                 )}
-                {errors[f.name] ? <p className="text-xs text-destructive">{errors[f.name]}</p> : f.hint ? <p className="text-xs text-muted-foreground">{f.hint}</p> : null}
+                {errors[f.name] ? (
+                  <p className="text-xs text-destructive">{errors[f.name]}</p>
+                ) : f.hint ? (
+                  <p className="text-xs text-muted-foreground">{f.hint}</p>
+                ) : null}
               </div>
             );
           })}
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              Cancel
+            </Button>
             <Button type="submit">Save</Button>
           </DialogFooter>
         </form>
@@ -98,7 +149,8 @@ export function EntityFormDialog<T extends object>({
   );
 }
 
-export const required = (label: string) => (v: unknown) => (String(v ?? "").trim() ? undefined : `${label} is required`);
+export const required = (label: string) => (v: unknown) =>
+  String(v ?? "").trim() ? undefined : `${label} is required`;
 export const slugId = (existing: string[], originalId?: string) => (v: unknown) => {
   const s = String(v ?? "");
   if (!s) return "ID is required";

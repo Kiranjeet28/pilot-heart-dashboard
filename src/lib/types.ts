@@ -85,7 +85,8 @@ export interface PlannedStep {
   done?: boolean;
 }
 
-export type ActivityKind = "info" | "action" | "result" | "warning" | "error" | "approval" | "safety";
+export type ActivityKind =
+  "info" | "action" | "result" | "warning" | "error" | "approval" | "safety";
 
 export interface ActivityEvent {
   id: string;
@@ -125,7 +126,14 @@ export interface Task {
   lastVerifiedResult?: string;
   verification?: VerificationState;
   currentAction?: ActionRequest;
-  lastObservation?: { imageDataUrl: string; capturedAt: number; simulated: boolean; width?: number; height?: number; observationId?: string };
+  lastObservation?: {
+    imageDataUrl: string;
+    capturedAt: number;
+    simulated: boolean;
+    width?: number;
+    height?: number;
+    observationId?: string;
+  };
 }
 
 export type WorkerSimulation = "connected" | "disconnected";

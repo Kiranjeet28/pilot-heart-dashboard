@@ -29,7 +29,12 @@ export function transitionTask(task: Task, nextStatus: TaskStatus): Task {
   if (!canTransition(task.status, nextStatus)) {
     throw new Error(`Invalid task transition: ${task.status} -> ${nextStatus}`);
   }
-  return { ...task, status: nextStatus, updatedAt: Date.now(), endedAt: isTerminal(nextStatus) ? Date.now() : task.endedAt };
+  return {
+    ...task,
+    status: nextStatus,
+    updatedAt: Date.now(),
+    endedAt: isTerminal(nextStatus) ? Date.now() : task.endedAt,
+  };
 }
 
 export function addPlan(task: Task, steps: PlannedStep[]): Task {
@@ -41,11 +46,15 @@ export function markCurrentAction(task: Task, action: ActionRequest): Task {
   return { ...task, currentAction: action, updatedAt: Date.now() };
 }
 
-export function recordVerification(task: Task, status: "passed" | "failed" | "unverified", reason?: string): Task {
+export function recordVerification(
+  task: Task,
+  status: "passed" | "failed" | "unverified",
+  reason?: string,
+): Task {
   return {
     ...task,
     verification: { status, reason, checkedAt: Date.now() },
-    lastVerifiedResult: status === "passed" ? reason ?? "Verified" : undefined,
+    lastVerifiedResult: status === "passed" ? (reason ?? "Verified") : undefined,
     updatedAt: Date.now(),
   };
 }

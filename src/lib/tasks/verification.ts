@@ -8,7 +8,11 @@ export interface VerificationResult {
   evidence?: string;
 }
 
-export function verifyTextMatch(expected: string, observed: string, opts?: { allowPartial?: boolean }): VerificationResult {
+export function verifyTextMatch(
+  expected: string,
+  observed: string,
+  opts?: { allowPartial?: boolean },
+): VerificationResult {
   const normalizedExpected = expected.trim();
   const normalizedObserved = observed.trim();
   if (!normalizedExpected) {
@@ -17,7 +21,9 @@ export function verifyTextMatch(expected: string, observed: string, opts?: { all
   if (normalizedObserved.length === 0) {
     return { status: "failed", reason: "Observed text was empty.", evidence: "" };
   }
-  const matches = opts?.allowPartial ? normalizedObserved.includes(normalizedExpected) : normalizedObserved === normalizedExpected;
+  const matches = opts?.allowPartial
+    ? normalizedObserved.includes(normalizedExpected)
+    : normalizedObserved === normalizedExpected;
   if (!matches) {
     return {
       status: "failed",
@@ -25,10 +31,17 @@ export function verifyTextMatch(expected: string, observed: string, opts?: { all
       evidence: `expected=${JSON.stringify(normalizedExpected)} observed=${JSON.stringify(normalizedObserved)}`,
     };
   }
-  return { status: "passed", reason: "The expected text matches the observed output.", evidence: normalizedObserved };
+  return {
+    status: "passed",
+    reason: "The expected text matches the observed output.",
+    evidence: normalizedObserved,
+  };
 }
 
-export function verifyActionOutcome(action: ActionRequest, observed: { ok: boolean; message?: string; text?: string; result?: string | null }): VerificationResult {
+export function verifyActionOutcome(
+  action: ActionRequest,
+  observed: { ok: boolean; message?: string; text?: string; result?: string | null },
+): VerificationResult {
   if (!observed.ok) {
     return { status: "failed", reason: observed.message ?? `The ${action.kind} action failed.` };
   }
@@ -39,12 +52,22 @@ export function verifyActionOutcome(action: ActionRequest, observed: { ok: boole
     return verifyTextMatch(action.text, observed.text ?? "", { allowPartial: false });
   }
   if (action.kind === "read_screen") {
-    return observed.result ? { status: "passed", reason: "Screenshot captured successfully.", evidence: observed.result } : { status: "unverified", reason: "No read_screen evidence was returned." };
+    return observed.result
+      ? { status: "passed", reason: "Screenshot captured successfully.", evidence: observed.result }
+      : { status: "unverified", reason: "No read_screen evidence was returned." };
   }
   if (action.kind === "key_press") {
-    return { status: "passed", reason: `Key action ${action.keys ?? ""} executed without error.`, evidence: observed.message ?? "key_press returned ok" };
+    return {
+      status: "passed",
+      reason: `Key action ${action.keys ?? ""} executed without error.`,
+      evidence: observed.message ?? "key_press returned ok",
+    };
   }
-  return { status: "passed", reason: `Action ${action.kind} completed successfully.`, evidence: observed.message ?? "ok" };
+  return {
+    status: "passed",
+    reason: `Action ${action.kind} completed successfully.`,
+    evidence: observed.message ?? "ok",
+  };
 }
 
 export function verifyFileExists(filePath: string): VerificationResult {
@@ -56,7 +79,14 @@ export function verifyFileExists(filePath: string): VerificationResult {
 
 export function verifyResult(actionKind: ActionKind, observed?: unknown): VerificationResult {
   if (!observed) {
-    return { status: "unverified", reason: `No verification evidence was available for ${actionKind}.` };
+    return {
+      status: "unverified",
+      reason: `No verification evidence was available for ${actionKind}.`,
+    };
   }
-  return { status: "passed", reason: `The ${actionKind} action was verified.`, evidence: String(observed) };
+  return {
+    status: "passed",
+    reason: `The ${actionKind} action was verified.`,
+    evidence: String(observed),
+  };
 }

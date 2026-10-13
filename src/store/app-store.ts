@@ -1,7 +1,23 @@
 // Central app store + demo task runner. UI reads via useAppState; mutations go through `actions`.
 import { useSyncExternalStore } from "react";
-import type { AccountProfile, ActionRequest, ActivityEvent, ActivityKind, AppSettings, DesktopTarget, Provider, Task, TaskStatus, WorkerSelection } from "@/lib/types";
-import { DEFAULT_PROFILES, DEFAULT_PROVIDERS, DEFAULT_SETTINGS, DEFAULT_TARGETS } from "@/lib/registry/defaults";
+import type {
+  AccountProfile,
+  ActionRequest,
+  ActivityEvent,
+  ActivityKind,
+  AppSettings,
+  DesktopTarget,
+  Provider,
+  Task,
+  TaskStatus,
+  WorkerSelection,
+} from "@/lib/types";
+import {
+  DEFAULT_PROFILES,
+  DEFAULT_PROVIDERS,
+  DEFAULT_SETTINGS,
+  DEFAULT_TARGETS,
+} from "@/lib/registry/defaults";
 import { canTransition, isActive } from "@/lib/tasks/state-machine";
 import { planDemoSteps, planRealObserveSteps } from "@/lib/tasks/planner";
 import { validateAction } from "@/lib/worker/action-validation";
@@ -63,11 +79,25 @@ function set(patch: Partial<AppState> | ((s: AppState) => Partial<AppState>)) {
 }
 
 function persist(p: Partial<AppState>) {
-  if (p.providers || p.profiles || p.targets) save("config", { providers: state.providers, profiles: state.profiles, targets: state.targets });
+  if (p.providers || p.profiles || p.targets)
+    save("config", {
+      providers: state.providers,
+      profiles: state.profiles,
+      targets: state.targets,
+    });
   // Real screenshots are never written to storage — only simulated previews persist.
-  if (p.tasks) save("tasks", state.tasks.map((t) => (t.lastObservation && !t.lastObservation.simulated ? { ...t, lastObservation: undefined } : t)));
+  if (p.tasks)
+    save(
+      "tasks",
+      state.tasks.map((t) =>
+        t.lastObservation && !t.lastObservation.simulated
+          ? { ...t, lastObservation: undefined }
+          : t,
+      ),
+    );
   if (p.activity) save("activity", state.activity);
-  if (p.settings || "emergencyStop" in p) save("settings", { ...state.settings, emergencyStop: state.emergencyStop });
+  if (p.settings || "emergencyStop" in p)
+    save("settings", { ...state.settings, emergencyStop: state.emergencyStop });
 }
 
 export const store = {
@@ -79,7 +109,11 @@ export const store = {
 };
 
 export function useAppState<T>(selector: (s: AppState) => T): T {
-  return useSyncExternalStore(store.subscribe, () => selector(state), () => selector(initial));
+  return useSyncExternalStore(
+    store.subscribe,
+    () => selector(state),
+    () => selector(initial),
+  );
 }
 
 // ---------- worker ----------
@@ -110,8 +144,22 @@ export const worker: DesktopWorker = {
 let counter = 0;
 export const uid = (p: string) => `${p}_${Date.now().toString(36)}${(counter++).toString(36)}`;
 
-function log(taskId: string | null, kind: ActivityKind, message: string, simulated = true, real = false) {
-  const ev: ActivityEvent = { id: uid("ev"), taskId, timestamp: Date.now(), kind, message, simulated, ...(real ? { real: true } : {}) };
+function log(
+  taskId: string | null,
+  kind: ActivityKind,
+  message: string,
+  simulated = true,
+  real = false,
+) {
+  const ev: ActivityEvent = {
+    id: uid("ev"),
+    taskId,
+    timestamp: Date.now(),
+    kind,
+    message,
+    simulated,
+    ...(real ? { real: true } : {}),
+  };
   set((s) => ({ activity: [ev, ...s.activity].slice(0, MAX_ACTIVITY) }));
 }
 
@@ -138,7 +186,10 @@ function clearTimer(id: string) {
 }
 function schedule(id: string, ms = state.settings.stepDelayMs) {
   clearTimer(id);
-  timers.set(id, setTimeout(() => void tick(id), ms));
+  timers.set(
+    id,
+    setTimeout(() => void tick(id), ms),
+  );
 }
 
 function fail(id: string, error: string) {
@@ -156,10 +207,28 @@ async function tick(id: string) {
     if (t.status === "queued") {
       const h = await w.healthCheck();
       if (getTask(id)?.status !== "queued") return;
-      if (!h.ok) return fail(id, sim ? "Worker disconnected — health check failed" : `Real worker unavailable: ${h.message}`);
-      log(id, "info", `Worker health OK (${h.latencyMs} ms, ${sim ? "demo" : "real local worker"})`, sim);
+      if (!h.ok)
+        return fail(
+          id,
+          sim
+            ? "Worker disconnected — health check failed"
+            : `Real worker unavailable: ${h.message}`,
+        );
+      log(
+        id,
+        "info",
+        `Worker health OK (${h.latencyMs} ms, ${sim ? "demo" : "real local worker"})`,
+        sim,
+      );
       transition(id, "planning");
-      log(id, "info", sim ? "Planning steps (demo planner — no AI provider call)" : "Planning observation-only steps (real mode, no AI provider call)", sim);
+      log(
+        id,
+        "info",
+        sim
+          ? "Planning steps (demo planner — no AI provider call)"
+          : "Planning observation-only steps (real mode, no AI provider call)",
+        sim,
+      );
       return schedule(id);
     }
     if (t.status === "planning") {
@@ -167,7 +236,14 @@ async function tick(id: string) {
       if (!target) return fail(id, "Desktop target no longer exists");
       const steps = sim ? planDemoSteps(t.description, target) : planRealObserveSteps(target);
       transition(id, "running", { steps, currentStep: 0 });
-      log(id, "info", sim ? `Plan ready: ${steps.length} simulated steps` : `Plan ready: ${steps.length} real observation steps. Real input actions are limited to the guided Notepad test in this milestone.`, sim);
+      log(
+        id,
+        "info",
+        sim
+          ? `Plan ready: ${steps.length} simulated steps`
+          : `Plan ready: ${steps.length} real observation steps. Real input actions are limited to the guided Notepad test in this milestone.`,
+        sim,
+      );
       return schedule(id);
     }
     if (t.status !== "running") return;
@@ -175,13 +251,29 @@ async function tick(id: string) {
     const step = t.steps[t.currentStep];
     if (!step) {
       const tname = state.targets.find((x) => x.id === t.targetId)?.displayName ?? t.targetId;
-      transition(id, "completed", { progress: 100, summary: sim ? `Completed ${t.steps.length} simulated steps on ${tname}. No real desktop actions were performed.` : `Completed ${t.steps.length} real observation steps via the local worker. No input was sent to the desktop.` });
-      log(id, "result", sim ? "Task completed (demo)" : "Task completed (real local worker)", sim, !sim);
+      transition(id, "completed", {
+        progress: 100,
+        summary: sim
+          ? `Completed ${t.steps.length} simulated steps on ${tname}. No real desktop actions were performed.`
+          : `Completed ${t.steps.length} real observation steps via the local worker. No input was sent to the desktop.`,
+      });
+      log(
+        id,
+        "result",
+        sim ? "Task completed (demo)" : "Task completed (real local worker)",
+        sim,
+        !sim,
+      );
       return;
     }
     if (!sim && !state.realActionsConfirmed) {
       transition(id, "waiting_for_approval");
-      log(id, "approval", "Confirmation required before the first REAL desktop action this session", false);
+      log(
+        id,
+        "approval",
+        "Confirmation required before the first REAL desktop action this session",
+        false,
+      );
       return;
     }
     if (step.requiresApproval && !step.approved) {
@@ -196,7 +288,12 @@ async function tick(id: string) {
     let result: ActionResult;
     if (!sim && step.action.kind === "read_screen") {
       realObs = await w.observe({ taskId: id, targetId: t.targetId, targetLabel: t.targetId });
-      result = { ok: true, message: "Captured real desktop screenshot", simulated: false, completedAt: realObs.capturedAt };
+      result = {
+        ok: true,
+        message: "Captured real desktop screenshot",
+        simulated: false,
+        completedAt: realObs.capturedAt,
+      };
     } else {
       result = await w.executeAction(id, v.action);
     }
@@ -210,7 +307,14 @@ async function tick(id: string) {
       }
       return fail(id, `${result.message} after 2 retries`);
     }
-    const obs = sim ? await w.observe({ taskId: id, targetId: t.targetId, targetLabel: state.targets.find((x) => x.id === t.targetId)?.displayName ?? t.targetId, note: step.action.description }) : realObs;
+    const obs = sim
+      ? await w.observe({
+          taskId: id,
+          targetId: t.targetId,
+          targetLabel: state.targets.find((x) => x.id === t.targetId)?.displayName ?? t.targetId,
+          note: step.action.description,
+        })
+      : realObs;
     if (getTask(id)?.status !== "running") return;
     const next = t.currentStep + 1;
     patchTask(id, {
@@ -218,7 +322,16 @@ async function tick(id: string) {
       retries: 0,
       progress: Math.round((next / t.steps.length) * 100),
       steps: getTask(id)!.steps.map((s, i) => (i === t.currentStep ? { ...s, done: true } : s)),
-      ...(obs ? { lastObservation: { imageDataUrl: obs.imageDataUrl, capturedAt: obs.capturedAt, simulated: obs.simulated, ...(obs.width ? { width: obs.width, height: obs.height } : {}) } } : {}),
+      ...(obs
+        ? {
+            lastObservation: {
+              imageDataUrl: obs.imageDataUrl,
+              capturedAt: obs.capturedAt,
+              simulated: obs.simulated,
+              ...(obs.width ? { width: obs.width, height: obs.height } : {}),
+            },
+          }
+        : {}),
     });
     log(id, "result", `${sim ? "" : "[REAL] "}${result.message}`, sim, !sim);
     schedule(id);
@@ -244,18 +357,32 @@ export const actions = {
     const activity = load<ActivityEvent[]>("activity") ?? [];
     const settings = load<AppSettings & { emergencyStop?: boolean }>("settings");
     // In-flight tasks cannot survive reload — pause them.
-    const restored = tasks.map((t) => (["queued", "planning", "running"].includes(t.status) ? { ...t, status: "paused" as const } : t));
+    const restored = tasks.map((t) =>
+      ["queued", "planning", "running"].includes(t.status)
+        ? { ...t, status: "paused" as const }
+        : t,
+    );
     state = {
       ...state,
       ...(config ?? {}),
       tasks: restored,
       activity,
-      settings: settings ? { ...DEFAULT_SETTINGS, workerSimulation: settings.workerSimulation, failureRate: settings.failureRate, stepDelayMs: settings.stepDelayMs, workerMode: settings.workerMode ?? "demo", workerPort: settings.workerPort ?? DEFAULT_SETTINGS.workerPort } : DEFAULT_SETTINGS,
+      settings: settings
+        ? {
+            ...DEFAULT_SETTINGS,
+            workerSimulation: settings.workerSimulation,
+            failureRate: settings.failureRate,
+            stepDelayMs: settings.stepDelayMs,
+            workerMode: settings.workerMode ?? "demo",
+            workerPort: settings.workerPort ?? DEFAULT_SETTINGS.workerPort,
+          }
+        : DEFAULT_SETTINGS,
       emergencyStop: settings?.emergencyStop ?? false,
       hydrated: true,
     };
     listeners.forEach((l) => l());
-    if (restored.some((t, i) => t.status !== tasks[i]?.status)) log(null, "warning", "Dashboard reloaded — in-flight tasks were paused");
+    if (restored.some((t, i) => t.status !== tasks[i]?.status))
+      log(null, "warning", "Dashboard reloaded — in-flight tasks were paused");
   },
 
   readiness(i: Omit<NewTaskInput, "description">) {
@@ -263,18 +390,37 @@ export const actions = {
       ...i,
       ...state,
       worker: state.settings.workerSimulation,
-      realWorker: isReal() ? { connected: state.connection.state === "connected" && !state.connection.stopped, message: state.connection.message } : undefined,
+      realWorker: isReal()
+        ? {
+            connected: state.connection.state === "connected" && !state.connection.stopped,
+            message: state.connection.message,
+          }
+        : undefined,
     });
   },
 
-  createTask(input: NewTaskInput, start: boolean): { ok: true; id: string } | { ok: false; issues: string[] } {
+  createTask(
+    input: NewTaskInput,
+    start: boolean,
+  ): { ok: true; id: string } | { ok: false; issues: string[] } {
     if (!input.description.trim()) return { ok: false, issues: ["Describe the task."] };
-    if (input.description.length > 4000) return { ok: false, issues: ["Task description is too long (max 4000)."] };
+    if (input.description.length > 4000)
+      return { ok: false, issues: ["Task description is too long (max 4000)."] };
     if (start) {
       const issues = actions.readiness(input);
       if (issues.length) return { ok: false, issues };
     }
-    const task: Task = { id: uid("task"), ...input, description: input.description.trim(), status: "draft", createdAt: Date.now(), progress: 0, steps: [], currentStep: 0, retries: 0 };
+    const task: Task = {
+      id: uid("task"),
+      ...input,
+      description: input.description.trim(),
+      status: "draft",
+      createdAt: Date.now(),
+      progress: 0,
+      steps: [],
+      currentStep: 0,
+      retries: 0,
+    };
     set((s) => ({ tasks: [task, ...s.tasks] }));
     log(task.id, "info", start ? "Task created" : "Draft saved", false);
     if (start) actions.start(task.id);
@@ -284,9 +430,16 @@ export const actions = {
   start(id: string): string[] {
     const t = getTask(id);
     if (!t) return ["Task not found"];
-    const issues = actions.readiness(t).filter((x) => !x.startsWith("Another task") || state.tasks.some((o) => o.id !== id && isActive(o.status)));
+    const issues = actions
+      .readiness(t)
+      .filter(
+        (x) =>
+          !x.startsWith("Another task") ||
+          state.tasks.some((o) => o.id !== id && isActive(o.status)),
+      );
     if (issues.length) return issues;
-    if (!transition(id, "queued", { startedAt: Date.now() })) return ["Task cannot be started from its current state"];
+    if (!transition(id, "queued", { startedAt: Date.now() }))
+      return ["Task cannot be started from its current state"];
     log(id, "info", "Queued");
     schedule(id, 300);
     return [];
@@ -303,8 +456,10 @@ export const actions = {
     const t = getTask(id);
     if (!t || t.status !== "paused") return [];
     if (state.emergencyStop) return ["Emergency stop is engaged"];
-    if (!isReal() && state.settings.workerSimulation === "disconnected") return ["Worker is disconnected"];
-    if (isReal() && state.connection.state !== "connected") return [`Real worker not connected: ${state.connection.message}`];
+    if (!isReal() && state.settings.workerSimulation === "disconnected")
+      return ["Worker is disconnected"];
+    if (isReal() && state.connection.state !== "connected")
+      return [`Real worker not connected: ${state.connection.message}`];
     transition(id, t.steps.length ? "running" : "queued");
     log(id, "info", "Resumed by user", false);
     schedule(id, 300);
@@ -322,7 +477,9 @@ export const actions = {
     const t = getTask(id);
     if (!t || t.status !== "waiting_for_approval") return;
     if (isReal()) set({ realActionsConfirmed: true });
-    patchTask(id, { steps: t.steps.map((s, i) => (i === t.currentStep ? { ...s, approved: true } : s)) });
+    patchTask(id, {
+      steps: t.steps.map((s, i) => (i === t.currentStep ? { ...s, approved: true } : s)),
+    });
     transition(id, "running");
     log(id, "approval", "Step approved by user", false);
     schedule(id, 300);
@@ -335,13 +492,24 @@ export const actions = {
   retry(id: string) {
     const t = getTask(id);
     if (!t) return { ok: false as const, issues: ["Task not found"] };
-    return actions.createTask({ description: t.description, providerId: t.providerId, profileId: t.profileId, targetId: t.targetId }, true);
+    return actions.createTask(
+      {
+        description: t.description,
+        providerId: t.providerId,
+        profileId: t.profileId,
+        targetId: t.targetId,
+      },
+      true,
+    );
   },
 
   deleteTask(id: string) {
     const t = getTask(id);
     if (!t || isActive(t.status)) return;
-    set((s) => ({ tasks: s.tasks.filter((x) => x.id !== id), activity: s.activity.filter((a) => a.taskId !== id) }));
+    set((s) => ({
+      tasks: s.tasks.filter((x) => x.id !== id),
+      activity: s.activity.filter((a) => a.taskId !== id),
+    }));
   },
 
   emergencyStop() {
@@ -351,21 +519,39 @@ export const actions = {
     // Always tell the real worker to stop too (no token needed), even in DEMO mode in case it's running.
     void localWorker.stop().then(
       () => log(null, "safety", "Local worker acknowledged STOP", false),
-      () => isReal() && log(null, "warning", "Could not reach the local worker to send STOP — use Ctrl+C in its PowerShell window", false),
+      () =>
+        isReal() &&
+        log(
+          null,
+          "warning",
+          "Could not reach the local worker to send STOP — use Ctrl+C in its PowerShell window",
+          false,
+        ),
     );
-    state.tasks.filter((t) => isActive(t.status)).forEach((t) => actions.cancel(t.id, "Cancelled by EMERGENCY STOP"));
+    state.tasks
+      .filter((t) => isActive(t.status))
+      .forEach((t) => actions.cancel(t.id, "Cancelled by EMERGENCY STOP"));
     log(null, "safety", "EMERGENCY STOP engaged — all tasks halted, new tasks blocked", false);
   },
 
   resetEmergencyStop() {
     set({ emergencyStop: false });
-    if (isReal() && readSession()) void localWorker.resume().catch(() => undefined).then(() => actions.refreshConnection());
+    if (isReal() && readSession())
+      void localWorker
+        .resume()
+        .catch(() => undefined)
+        .then(() => actions.refreshConnection());
     log(null, "safety", "Emergency stop reset", false);
   },
 
   updateSettings(p: Partial<AppSettings>) {
     set((s) => ({ settings: { ...s.settings, ...p } }));
-    if (p.workerSimulation) log(null, p.workerSimulation === "connected" ? "info" : "warning", `Mock worker ${p.workerSimulation} (simulated)`);
+    if (p.workerSimulation)
+      log(
+        null,
+        p.workerSimulation === "connected" ? "info" : "warning",
+        `Mock worker ${p.workerSimulation} (simulated)`,
+      );
   },
 
   upsertProvider(p: Provider, originalId?: string) {
@@ -390,23 +576,45 @@ export const actions = {
   async refreshConnection() {
     if (!isReal()) {
       const c = state.settings.workerSimulation === "connected";
-      set({ connection: { state: c ? "connected" : "disconnected", message: c ? "Demo worker (simulated)" : "Demo worker disconnected (simulated)", checkedAt: Date.now() } });
+      set({
+        connection: {
+          state: c ? "connected" : "disconnected",
+          message: c ? "Demo worker (simulated)" : "Demo worker disconnected (simulated)",
+          checkedAt: Date.now(),
+        },
+      });
       return;
     }
     if (state.connection.state === "pairing") return;
     try {
       const s = await localWorker.getStatus();
       if (!isReal()) return;
-      set({ connection: { state: s.connection === "pairing" ? "pairing" : s.connection, message: s.message, version: s.workerVersion, screen: s.screen, stopped: s.stopped, checkedAt: Date.now() } });
+      set({
+        connection: {
+          state: s.connection === "pairing" ? "pairing" : s.connection,
+          message: s.message,
+          version: s.workerVersion,
+          screen: s.screen,
+          stopped: s.stopped,
+          checkedAt: Date.now(),
+        },
+      });
     } catch (e) {
       if (!isReal()) return;
-      set({ connection: { state: "error", message: e instanceof Error ? e.message : "Worker error", checkedAt: Date.now() } });
+      set({
+        connection: {
+          state: "error",
+          message: e instanceof Error ? e.message : "Worker error",
+          checkedAt: Date.now(),
+        },
+      });
     }
   },
 
   async pairWorker(code: string): Promise<string | null> {
     const c = code.trim();
-    if (!/^[A-Za-z0-9-]{8,9}$/.test(c)) return "Enter the 8-character code shown in the worker window (e.g. ABCD-EFGH).";
+    if (!/^[A-Za-z0-9-]{8,9}$/.test(c))
+      return "Enter the 8-character code shown in the worker window (e.g. ABCD-EFGH).";
     set({ connection: { state: "pairing", message: "Pairing with local worker…" } });
     try {
       const r = await localWorker.pair(c);
@@ -416,7 +624,9 @@ export const actions = {
       await actions.refreshConnection();
       return null;
     } catch (e) {
-      set({ connection: { state: "error", message: e instanceof Error ? e.message : "Pairing failed" } });
+      set({
+        connection: { state: "error", message: e instanceof Error ? e.message : "Pairing failed" },
+      });
       return e instanceof Error ? e.message : "Pairing failed";
     }
   },
@@ -429,9 +639,15 @@ export const actions = {
   },
 
   setWorkerMode(mode: WorkerSelection): string | null {
-    if (state.tasks.some((t) => isActive(t.status))) return "Finish or cancel the active task before switching worker mode.";
+    if (state.tasks.some((t) => isActive(t.status)))
+      return "Finish or cancel the active task before switching worker mode.";
     set((s) => ({ settings: { ...s.settings, workerMode: mode }, realActionsConfirmed: false }));
-    log(null, "info", mode === "demo" ? "Switched to DEMO mode (simulated worker)" : "Switched to REAL LOCAL mode", false);
+    log(
+      null,
+      "info",
+      mode === "demo" ? "Switched to DEMO mode (simulated worker)" : "Switched to REAL LOCAL mode",
+      false,
+    );
     void actions.refreshConnection();
     return null;
   },
@@ -449,7 +665,10 @@ export const actions = {
   },
 
   /** Guarded single real action (used by the guided Notepad test). */
-  async runRealAction(a: ActionRequest, screen?: { width: number; height: number }): Promise<ActionResult> {
+  async runRealAction(
+    a: ActionRequest,
+    screen?: { width: number; height: number },
+  ): Promise<ActionResult> {
     if (!isReal()) throw new Error("Switch to REAL LOCAL mode first.");
     if (state.emergencyStop) throw new Error("Emergency stop is engaged.");
     if (!state.realActionsConfirmed) throw new Error("Confirm real desktop actions first.");
@@ -473,7 +692,11 @@ export const actions = {
     if (!isReal()) throw new Error("Switch to REAL LOCAL mode first.");
     if (state.emergencyStop) throw new Error("Emergency stop is engaged.");
     if (!state.realActionsConfirmed) throw new Error("Confirm real desktop actions first.");
-    const o = await localWorker.observe({ taskId: "guided-notepad-test", targetId: "desktop", targetLabel: "Desktop" });
+    const o = await localWorker.observe({
+      taskId: "guided-notepad-test",
+      targetId: "desktop",
+      targetLabel: "Desktop",
+    });
     log(null, "result", `[REAL] Captured desktop screenshot ${o.width}×${o.height}`, false, true);
     return o;
   },
@@ -489,5 +712,7 @@ export const actions = {
 
 function upsert<T extends { id: string }>(list: T[], item: T, originalId?: string): T[] {
   const key = originalId ?? item.id;
-  return list.some((x) => x.id === key) ? list.map((x) => (x.id === key ? item : x)) : [...list, item];
+  return list.some((x) => x.id === key)
+    ? list.map((x) => (x.id === key ? item : x))
+    : [...list, item];
 }

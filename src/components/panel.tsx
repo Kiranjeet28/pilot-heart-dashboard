@@ -1,12 +1,24 @@
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
-export function Panel({ title, actions, children, className }: { title?: ReactNode; actions?: ReactNode; children: ReactNode; className?: string }) {
+export function Panel({
+  title,
+  actions,
+  children,
+  className,
+}: {
+  title?: ReactNode;
+  actions?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
   return (
     <section className={cn("rounded-lg border bg-card", className)}>
       {title ? (
         <div className="flex items-center justify-between gap-2 border-b px-4 py-2.5">
-          <h2 className="font-mono text-xs font-medium uppercase tracking-wider text-muted-foreground">{title}</h2>
+          <h2 className="font-mono text-xs font-medium uppercase tracking-wider text-muted-foreground">
+            {title}
+          </h2>
           {actions}
         </div>
       ) : null}
@@ -15,7 +27,15 @@ export function Panel({ title, actions, children, className }: { title?: ReactNo
   );
 }
 
-export function PageHeader({ title, description, actions }: { title: string; description?: string; actions?: ReactNode }) {
+export function PageHeader({
+  title,
+  description,
+  actions,
+}: {
+  title: string;
+  description?: string;
+  actions?: ReactNode;
+}) {
   return (
     <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
       <div>

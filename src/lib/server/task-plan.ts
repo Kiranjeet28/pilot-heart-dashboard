@@ -24,8 +24,47 @@ const taskPlanRequestSchema = z.object({
   timeoutMs: z.number().int().min(1000).max(120000).optional().default(30000),
 });
 
-function getServerToken(): string {
-  return process.env.DESKTOPPILOT_SERVER_TOKEN ?? "desktoppilot-local-dev-token";
+function getServerToken(): string | null {
+  const token = process.env.DESKTOPPILOT_SERVER_TOKEN?.trim();
+  return token && token.length > 0 ? token : null;
+}
+
+function isSameOriginRequest(request: Request): boolean {
+  const url = new URL(request.url);
+  const originHeader = request.headers.get("origin");
+  const refererHeader = request.headers.get("referer");
+  const fetchSite = request.headers.get("sec-fetch-site");
+
+  if (fetchSite === "cross-site") return false;
+
+  for (const candidate of [originHeader, refererHeader]) {
+    if (!candidate) continue;
+    try {
+      const origin = new URL(candidate).origin;
+      if (origin !== url.origin) return false;
+    } catch {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function isAuthorizedRequest(request: Request): boolean {
+  const serverToken = getServerToken();
+  const authHeader =
+    request.headers.get("authorization") ?? request.headers.get("x-desktoppilot-session");
+
+  if (authHeader) {
+    if (!authHeader.startsWith("Bearer ")) return false;
+    const provided = authHeader.slice(7).trim();
+    if (serverToken && provided === serverToken) return true;
+    if (!serverToken && isSameOriginRequest(request)) return true;
+    return false;
+  }
+
+  if (!serverToken) return isSameOriginRequest(request);
+  return isSameOriginRequest(request);
 }
 
 function extractJsonObject(raw: string): string {
@@ -107,10 +146,7 @@ export async function handleTaskPlanRequest(request: Request): Promise<Response>
     );
   }
 
-  const auth =
-    request.headers.get("authorization") ?? request.headers.get("x-desktoppilot-session");
-  const expected = getServerToken();
-  if (!auth || !auth.startsWith("Bearer ") || auth.slice(7).trim() !== expected) {
+  if (!isAuthorizedRequest(request)) {
     return Response.json(
       { ok: false, code: "unauthorized", message: "Authentication required." },
       { status: 401 },

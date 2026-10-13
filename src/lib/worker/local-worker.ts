@@ -2,12 +2,34 @@
 import { z } from "zod";
 import type { ActionRequest } from "@/lib/types";
 import type { ValidatedActionRequest } from "./action-validation";
-import type { ActionResult, DesktopWorker, ObservationRequest, ObservationResult, WorkerCapabilities, WorkerHealth, WorkerStatus } from "./worker";
+import type {
+  ActionResult,
+  DesktopWorker,
+  ObservationRequest,
+  ObservationResult,
+  WorkerCapabilities,
+  WorkerHealth,
+  WorkerStatus,
+} from "./worker";
 
-export type WorkerErrorCode = "unreachable" | "not_paired" | "unauthorized" | "forbidden" | "timeout" | "busy" | "stopped" | "cancelled" | "invalid" | "server";
+export type WorkerErrorCode =
+  | "unreachable"
+  | "not_paired"
+  | "unauthorized"
+  | "forbidden"
+  | "timeout"
+  | "busy"
+  | "stopped"
+  | "cancelled"
+  | "invalid"
+  | "server";
 
 export class WorkerRequestError extends Error {
-  constructor(public code: WorkerErrorCode, message: string, public status?: number) {
+  constructor(
+    public code: WorkerErrorCode,
+    message: string,
+    public status?: number,
+  ) {
     super(message);
   }
 }
@@ -61,7 +83,12 @@ const ActionSchema = z.object({
   clipboard_length: z.number().optional(),
   typed_length: z.number().optional(),
 });
-const CapsSchema = z.object({ actions: z.array(z.string()), keys: z.array(z.string()), limits: z.record(z.number()), ui_automation: z.boolean() });
+const CapsSchema = z.object({
+  actions: z.array(z.string()),
+  keys: z.array(z.string()),
+  limits: z.record(z.number()),
+  ui_automation: z.boolean(),
+});
 
 export interface LocalWorkerOptions {
   port: () => number;
@@ -112,24 +139,42 @@ export class LocalHttpWorker implements DesktopWorker {
       /* empty body */
     }
     if (!res.ok) {
-      const detail = typeof (data as { detail?: unknown })?.detail === "string" ? (data as { detail: string }).detail : `HTTP ${res.status}`;
+      const detail =
+        typeof (data as { detail?: unknown })?.detail === "string"
+          ? (data as { detail: string }).detail
+          : `HTTP ${res.status}`;
       const code: WorkerErrorCode =
-        res.status === 401 ? "unauthorized"
-        : res.status === 403 ? "forbidden"
-        : res.status === 423 ? "stopped"
-        : res.status === 504 ? "timeout"
-        : res.status === 409 ? (detail === "busy" ? "busy" : detail === "task_cancelled" ? "cancelled" : "invalid")
-        : res.status === 422 || res.status === 400 ? "invalid"
-        : "server";
+        res.status === 401
+          ? "unauthorized"
+          : res.status === 403
+            ? "forbidden"
+            : res.status === 423
+              ? "stopped"
+              : res.status === 504
+                ? "timeout"
+                : res.status === 409
+                  ? detail === "busy"
+                    ? "busy"
+                    : detail === "task_cancelled"
+                      ? "cancelled"
+                      : "invalid"
+                  : res.status === 422 || res.status === 400
+                    ? "invalid"
+                    : "server";
       throw new WorkerRequestError(code, diagnose(code, port, detail), res.status);
     }
     const parsed = schema.safeParse(data);
-    if (!parsed.success) throw new WorkerRequestError("server", diagnose("server", port, "unexpected response shape"));
+    if (!parsed.success)
+      throw new WorkerRequestError("server", diagnose("server", port, "unexpected response shape"));
     return parsed.data;
   }
 
   async pair(code: string): Promise<{ token: string; expiresAt: number }> {
-    const r = await this.request("/pair", PairSchema, { method: "POST", body: { code }, auth: false });
+    const r = await this.request("/pair", PairSchema, {
+      method: "POST",
+      body: { code },
+      auth: false,
+    });
     return { token: r.token, expiresAt: r.expires_at };
   }
 
@@ -138,20 +183,37 @@ export class LocalHttpWorker implements DesktopWorker {
       // Probe reachability without credentials so we can give a precise message.
       try {
         const h = await this.request("/health", HealthSchema, { auth: false, timeoutMs: 3000 });
-        return { mode: "live", connection: "disconnected", workerVersion: h.version, message: "Worker is running but not paired. Enter the pairing code." };
+        return {
+          mode: "live",
+          connection: "disconnected",
+          workerVersion: h.version,
+          message: "Worker is running but not paired. Enter the pairing code.",
+        };
       } catch (e) {
-        return { mode: "live", connection: "disconnected", message: e instanceof Error ? e.message : "Worker unreachable" };
+        return {
+          mode: "live",
+          connection: "disconnected",
+          message: e instanceof Error ? e.message : "Worker unreachable",
+        };
       }
     }
     const h = await this.request("/health", HealthSchema, { timeoutMs: 4000 });
-    if (!h.authenticated) return { mode: "live", connection: "error", workerVersion: h.version, message: diagnose("unauthorized", this.opts.port()) };
+    if (!h.authenticated)
+      return {
+        mode: "live",
+        connection: "error",
+        workerVersion: h.version,
+        message: diagnose("unauthorized", this.opts.port()),
+      };
     return {
       mode: "live",
       connection: h.busy ? "busy" : "connected",
       workerVersion: h.version,
       screen: h.screen ?? undefined,
       stopped: h.stopped ?? false,
-      message: h.stopped ? "Connected, but the worker is stopped — reset Emergency Stop to resume." : "Connected to the real local Windows worker.",
+      message: h.stopped
+        ? "Connected, but the worker is stopped — reset Emergency Stop to resume."
+        : "Connected to the real local Windows worker.",
     };
   }
 
@@ -159,9 +221,19 @@ export class LocalHttpWorker implements DesktopWorker {
     const t0 = Date.now();
     try {
       const s = await this.getStatus();
-      return { ok: s.connection === "connected" && !s.stopped, latencyMs: Date.now() - t0, checkedAt: Date.now(), message: s.message };
+      return {
+        ok: s.connection === "connected" && !s.stopped,
+        latencyMs: Date.now() - t0,
+        checkedAt: Date.now(),
+        message: s.message,
+      };
     } catch (e) {
-      return { ok: false, latencyMs: 0, checkedAt: Date.now(), message: e instanceof Error ? e.message : "Health check failed" };
+      return {
+        ok: false,
+        latencyMs: 0,
+        checkedAt: Date.now(),
+        message: e instanceof Error ? e.message : "Health check failed",
+      };
     }
   }
 
@@ -171,20 +243,50 @@ export class LocalHttpWorker implements DesktopWorker {
   }
 
   async observe(req: ObservationRequest): Promise<ObservationResult> {
-    const r = await this.request("/observe", ObserveSchema, { method: "POST", body: { task_id: req.taskId.slice(0, 64) }, timeoutMs: 15000 });
-    return { imageDataUrl: r.image, capturedAt: r.captured_at, simulated: false, width: r.width, height: r.height, observationId: r.observation_id };
+    const r = await this.request("/observe", ObserveSchema, {
+      method: "POST",
+      body: { task_id: req.taskId.slice(0, 64) },
+      timeoutMs: 15000,
+    });
+    return {
+      imageDataUrl: r.image,
+      capturedAt: r.captured_at,
+      simulated: false,
+      width: r.width,
+      height: r.height,
+      observationId: r.observation_id,
+    };
   }
 
   async executeAction(taskId: string, action: ValidatedActionRequest): Promise<ActionResult> {
     if (action.kind === "read_screen") {
-      const o = await this.observe({ taskId, targetId: action.targetId, targetLabel: action.targetId });
-      return { ok: true, message: "Captured real desktop screenshot", simulated: false, completedAt: o.capturedAt };
+      const o = await this.observe({
+        taskId,
+        targetId: action.targetId,
+        targetLabel: action.targetId,
+      });
+      return {
+        ok: true,
+        message: "Captured real desktop screenshot",
+        simulated: false,
+        completedAt: o.capturedAt,
+      };
     }
     const payload = toWorkerPayload(action);
-    if (!payload) return { ok: false, message: `${action.kind} is not supported by the local worker yet (UI Automation is a later extension)`, simulated: false, completedAt: Date.now() };
+    if (!payload)
+      return {
+        ok: false,
+        message: `${action.kind} is not supported by the local worker yet (UI Automation is a later extension)`,
+        simulated: false,
+        completedAt: Date.now(),
+      };
     const r = await this.request("/actions", ActionSchema, {
       method: "POST",
-      body: { request_id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`, task_id: taskId.slice(0, 64), action: payload },
+      body: {
+        request_id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+        task_id: taskId.slice(0, 64),
+        action: payload,
+      },
       timeoutMs: 20000,
     });
     return {
@@ -192,13 +294,20 @@ export class LocalHttpWorker implements DesktopWorker {
       message: r.message,
       simulated: false,
       completedAt: r.completed_at,
-      data: { ...(r.clipboard_length != null ? { clipboardLength: r.clipboard_length } : {}), ...(r.typed_length != null ? { typedLength: r.typed_length } : {}) },
+      data: {
+        ...(r.clipboard_length != null ? { clipboardLength: r.clipboard_length } : {}),
+        ...(r.typed_length != null ? { typedLength: r.typed_length } : {}),
+      },
     };
   }
 
   async cancelTask(taskId: string): Promise<void> {
     try {
-      await this.request("/cancel", z.unknown(), { method: "POST", body: { task_id: taskId.slice(0, 64) }, timeoutMs: 3000 });
+      await this.request("/cancel", z.unknown(), {
+        method: "POST",
+        body: { task_id: taskId.slice(0, 64) },
+        timeoutMs: 3000,
+      });
     } catch {
       /* best effort — the dashboard runner also refuses to continue */
     }

@@ -25,5 +25,7 @@ export function save(key: StoreKey, value: unknown) {
 
 export function clearAll() {
   if (typeof window === "undefined") return;
-  (["config", "tasks", "activity", "settings"] as StoreKey[]).forEach((k) => window.localStorage.removeItem(PREFIX + k));
+  (["config", "tasks", "activity", "settings"] as StoreKey[]).forEach((k) =>
+    window.localStorage.removeItem(PREFIX + k),
+  );
 }

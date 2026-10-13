@@ -17,20 +17,42 @@ export function AppHeader() {
         {mode === "demo" ? (
           <>
             <Pill tone="warning">DEMO MODE · simulated worker</Pill>
-            <Pill tone={worker === "connected" ? "success" : "destructive"}>worker: {worker === "connected" ? "mock connected" : "disconnected"}</Pill>
+            <Pill tone={worker === "connected" ? "success" : "destructive"}>
+              worker: {worker === "connected" ? "mock connected" : "disconnected"}
+            </Pill>
           </>
         ) : (
           <>
             <Pill tone="destructive">REAL LOCAL MODE</Pill>
-            <Pill tone={conn.state === "connected" ? (conn.stopped ? "warning" : "success") : conn.state === "busy" || conn.state === "pairing" ? "info" : conn.state === "error" ? "destructive" : "muted"}>
-              worker: {conn.state}{conn.stopped ? " · stopped" : ""}
+            <Pill
+              tone={
+                conn.state === "connected"
+                  ? conn.stopped
+                    ? "warning"
+                    : "success"
+                  : conn.state === "busy" || conn.state === "pairing"
+                    ? "info"
+                    : conn.state === "error"
+                      ? "destructive"
+                      : "muted"
+              }
+            >
+              worker: {conn.state}
+              {conn.stopped ? " · stopped" : ""}
             </Pill>
           </>
         )}
       </div>
       <div className="ml-auto flex items-center gap-2">
         {estop ? (
-          <Button size="sm" variant="outline" onClick={() => { actions.resetEmergencyStop(); toast.success("Emergency stop reset"); }}>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              actions.resetEmergencyStop();
+              toast.success("Emergency stop reset");
+            }}
+          >
             <RotateCcw className="h-4 w-4" /> Reset E-Stop
           </Button>
         ) : null}
@@ -39,7 +61,10 @@ export function AppHeader() {
           variant="destructive"
           className="font-mono uppercase tracking-wide"
           disabled={estop}
-          onClick={() => { actions.emergencyStop(); toast.error("Emergency stop engaged — all tasks halted"); }}
+          onClick={() => {
+            actions.emergencyStop();
+            toast.error("Emergency stop engaged — all tasks halted");
+          }}
         >
           <OctagonX className="h-4 w-4" /> {estop ? "Stopped" : "Emergency Stop"}
         </Button>

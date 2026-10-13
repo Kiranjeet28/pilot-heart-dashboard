@@ -4,7 +4,16 @@ const TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
   draft: ["queued", "cancelled"],
   queued: ["planning", "paused", "cancelled", "failed"],
   planning: ["running", "paused", "cancelled", "failed"],
-  running: ["waiting_for_approval", "awaiting_approval", "awaiting_input", "verifying", "paused", "completed", "failed", "cancelled"],
+  running: [
+    "waiting_for_approval",
+    "awaiting_approval",
+    "awaiting_input",
+    "verifying",
+    "paused",
+    "completed",
+    "failed",
+    "cancelled",
+  ],
   waiting_for_approval: ["running", "cancelled", "failed"],
   awaiting_approval: ["running", "cancelled", "failed"],
   awaiting_input: ["running", "cancelled", "failed"],
@@ -15,7 +24,16 @@ const TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
   cancelled: [],
 };
 
-export const ACTIVE_STATUSES: TaskStatus[] = ["queued", "planning", "running", "waiting_for_approval", "awaiting_approval", "awaiting_input", "verifying", "paused"];
+export const ACTIVE_STATUSES: TaskStatus[] = [
+  "queued",
+  "planning",
+  "running",
+  "waiting_for_approval",
+  "awaiting_approval",
+  "awaiting_input",
+  "verifying",
+  "paused",
+];
 export const TERMINAL_STATUSES: TaskStatus[] = ["completed", "failed", "cancelled"];
 
 export function canTransition(from: TaskStatus, to: TaskStatus): boolean {

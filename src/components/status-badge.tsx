@@ -18,7 +18,13 @@ const TONE: Record<TaskStatus, string> = {
 export function TaskStatusBadge({ status, className }: { status: TaskStatus; className?: string }) {
   const pulsing = status === "running" || status === "planning" || status === "queued";
   return (
-    <span className={cn("inline-flex items-center gap-1.5 rounded border px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide", TONE[status], className)}>
+    <span
+      className={cn(
+        "inline-flex items-center gap-1.5 rounded border px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide",
+        TONE[status],
+        className,
+      )}
+    >
       <span className={cn("h-1.5 w-1.5 rounded-full bg-current", pulsing && "animate-pulse")} />
       {STATUS_LABEL[status]}
     </span>
@@ -27,7 +33,12 @@ export function TaskStatusBadge({ status, className }: { status: TaskStatus; cla
 
 export function SimulatedTag({ className }: { className?: string }) {
   return (
-    <span className={cn("rounded border border-warning/40 bg-warning/10 px-1.5 py-px font-mono text-[10px] uppercase tracking-wider text-warning", className)}>
+    <span
+      className={cn(
+        "rounded border border-warning/40 bg-warning/10 px-1.5 py-px font-mono text-[10px] uppercase tracking-wider text-warning",
+        className,
+      )}
+    >
       Simulated
     </span>
   );
@@ -35,13 +46,24 @@ export function SimulatedTag({ className }: { className?: string }) {
 
 export function RealTag({ className }: { className?: string }) {
   return (
-    <span className={cn("rounded border border-destructive/50 bg-destructive/10 px-1.5 py-px font-mono text-[10px] uppercase tracking-wider text-destructive", className)}>
+    <span
+      className={cn(
+        "rounded border border-destructive/50 bg-destructive/10 px-1.5 py-px font-mono text-[10px] uppercase tracking-wider text-destructive",
+        className,
+      )}
+    >
       Real desktop
     </span>
   );
 }
 
-export function Pill({ tone = "muted", children }: { tone?: "muted" | "success" | "warning" | "destructive" | "info"; children: ReactNode }) {
+export function Pill({
+  tone = "muted",
+  children,
+}: {
+  tone?: "muted" | "success" | "warning" | "destructive" | "info";
+  children: ReactNode;
+}) {
   const t = {
     muted: "border-border text-muted-foreground",
     success: "border-success/40 text-success",
@@ -49,5 +71,11 @@ export function Pill({ tone = "muted", children }: { tone?: "muted" | "success" 
     destructive: "border-destructive/50 text-destructive",
     info: "border-info/40 text-info",
   }[tone];
-  return <span className={cn("inline-flex items-center rounded border px-2 py-0.5 font-mono text-[11px]", t)}>{children}</span>;
+  return (
+    <span
+      className={cn("inline-flex items-center rounded border px-2 py-0.5 font-mono text-[11px]", t)}
+    >
+      {children}
+    </span>
+  );
 }

@@ -1,5 +1,12 @@
 // DEMO-mode adapter. Simulates responses; performs NO real desktop actions.
-import type { ActionResult, DesktopWorker, ObservationRequest, ObservationResult, WorkerHealth, WorkerStatus } from "./worker";
+import type {
+  ActionResult,
+  DesktopWorker,
+  ObservationRequest,
+  ObservationResult,
+  WorkerHealth,
+  WorkerStatus,
+} from "./worker";
 import { WorkerUnavailableError } from "./worker";
 import type { ValidatedActionRequest } from "./action-validation";
 
@@ -10,7 +17,8 @@ export interface MockWorkerOptions {
 }
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const esc = (s: string) => s.replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" })[c]!);
+const esc = (s: string) =>
+  s.replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" })[c]!);
 
 function simulatedScreenshot(label: string, note: string): string {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360" viewBox="0 0 640 360">
@@ -35,7 +43,8 @@ export class MockDesktopWorker implements DesktopWorker {
     return (this.opts.random ?? Math.random)();
   }
   private ensure() {
-    if (!this.opts.isConnected()) throw new WorkerUnavailableError("Mock worker is disconnected (simulated)");
+    if (!this.opts.isConnected())
+      throw new WorkerUnavailableError("Mock worker is disconnected (simulated)");
   }
 
   async getStatus(): Promise<WorkerStatus> {
@@ -44,30 +53,44 @@ export class MockDesktopWorker implements DesktopWorker {
       mode: "demo",
       connection: c ? "connected" : "disconnected",
       workerVersion: "mock-0.1",
-      message: c ? "Demo worker active — actions are simulated" : "No worker reachable (simulated disconnect)",
+      message: c
+        ? "Demo worker active — actions are simulated"
+        : "No worker reachable (simulated disconnect)",
     };
   }
 
   async healthCheck(): Promise<WorkerHealth> {
     await wait(120);
     const ok = this.opts.isConnected();
-    return { ok, latencyMs: ok ? 20 + Math.round(this.rand() * 40) : 0, checkedAt: Date.now(), message: ok ? "Mock worker healthy" : "Mock worker unreachable" };
+    return {
+      ok,
+      latencyMs: ok ? 20 + Math.round(this.rand() * 40) : 0,
+      checkedAt: Date.now(),
+      message: ok ? "Mock worker healthy" : "Mock worker unreachable",
+    };
   }
 
   async observe(req: ObservationRequest): Promise<ObservationResult> {
     this.ensure();
     await wait(80);
-    return { imageDataUrl: simulatedScreenshot(req.targetLabel, req.note ?? ""), capturedAt: Date.now(), simulated: true };
+    return {
+      imageDataUrl: simulatedScreenshot(req.targetLabel, req.note ?? ""),
+      capturedAt: Date.now(),
+      simulated: true,
+    };
   }
 
   async executeAction(taskId: string, action: ValidatedActionRequest): Promise<ActionResult> {
     this.ensure();
-    if (this.cancelled.has(taskId)) return { ok: false, message: "Task was cancelled", simulated: true, completedAt: Date.now() };
+    if (this.cancelled.has(taskId))
+      return { ok: false, message: "Task was cancelled", simulated: true, completedAt: Date.now() };
     await wait(150);
     const fail = this.rand() < this.opts.failureRate();
     return {
       ok: !fail,
-      message: fail ? `Simulated failure: ${action.kind} did not complete` : `Simulated ${action.kind} completed`,
+      message: fail
+        ? `Simulated failure: ${action.kind} did not complete`
+        : `Simulated ${action.kind} completed`,
       simulated: true,
       completedAt: Date.now(),
     };

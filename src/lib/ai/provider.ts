@@ -1,7 +1,14 @@
 import { z } from "zod";
 import type { AccountProfile, ActionRequest, Provider } from "@/lib/types";
 
-export type ProviderErrorCode = "missing_credentials" | "auth_failed" | "rate_limit" | "timeout" | "invalid_response" | "network_error" | "unknown";
+export type ProviderErrorCode =
+  | "missing_credentials"
+  | "auth_failed"
+  | "rate_limit"
+  | "timeout"
+  | "invalid_response"
+  | "network_error"
+  | "unknown";
 
 export interface AIRequest {
   taskId?: string;
@@ -39,7 +46,16 @@ export interface ProviderAdapter {
 }
 
 const actionSchema = z.object({
-  kind: z.enum(["focus_window", "read_screen", "click", "type_text", "key_press", "wait", "copy_selection", "paste"]),
+  kind: z.enum([
+    "focus_window",
+    "read_screen",
+    "click",
+    "type_text",
+    "key_press",
+    "wait",
+    "copy_selection",
+    "paste",
+  ]),
   targetId: z.string().min(1),
   description: z.string().min(1).max(600),
   text: z.string().max(5000).optional(),
@@ -62,7 +78,9 @@ export function normalizeProviderResponse(data: unknown): ProviderResult {
   const parsed = typeof data === "string" ? JSON.parse(data) : data;
   const payload = responseSchema.safeParse(parsed);
   if (!payload.success) {
-    throw new Error(`Malformed provider response: ${payload.error.issues.map((issue) => issue.message).join("; ")}`);
+    throw new Error(
+      `Malformed provider response: ${payload.error.issues.map((issue) => issue.message).join("; ")}`,
+    );
   }
   const output = payload.data;
   return {
@@ -75,7 +93,11 @@ export function normalizeProviderResponse(data: unknown): ProviderResult {
   };
 }
 
-function makeProviderFailure(code: ProviderErrorCode, message: string, retryable: boolean): ProviderFailure {
+function makeProviderFailure(
+  code: ProviderErrorCode,
+  message: string,
+  retryable: boolean,
+): ProviderFailure {
   return { ok: false, code, message, retryable };
 }
 
@@ -130,7 +152,11 @@ export class GeminiProvider implements ProviderAdapter {
       try {
         return normalizeProviderResponse(payload);
       } catch (error) {
-        return makeProviderFailure("invalid_response", error instanceof Error ? error.message : "Malformed Gemini response", false);
+        return makeProviderFailure(
+          "invalid_response",
+          error instanceof Error ? error.message : "Malformed Gemini response",
+          false,
+        );
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Gemini request failed";
@@ -166,7 +192,11 @@ export class MockAIProvider implements ProviderAdapter {
   }
 }
 
-export function createAIProvider(provider: Provider, profile?: AccountProfile, overrides?: { apiKey?: string; timeoutMs?: number }): ProviderAdapter {
+export function createAIProvider(
+  provider: Provider,
+  profile?: AccountProfile,
+  overrides?: { apiKey?: string; timeoutMs?: number },
+): ProviderAdapter {
   if (provider.type === "gemini") return new GeminiProvider();
   if (provider.type === "openai") return new MockAIProvider();
   return new MockAIProvider();

@@ -12,7 +12,8 @@ import { WorkerModePanel, PairingPanel, SetupGuide } from "@/components/worker-s
 import { NotepadTestPanel } from "@/components/notepad-test";
 
 export const Route = createFileRoute("/settings")({
-  head: () => pageMeta("Settings", "Worker mode, local worker pairing, setup guide and safety controls."),
+  head: () =>
+    pageMeta("Settings", "Worker mode, local worker pairing, setup guide and safety controls."),
   component: SettingsPage,
 });
 
@@ -32,7 +33,10 @@ function SettingsPage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-4">
-      <PageHeader title="Settings" description="Choose DEMO or REAL LOCAL, pair the Windows worker, and manage safety." />
+      <PageHeader
+        title="Settings"
+        description="Choose DEMO or REAL LOCAL, pair the Windows worker, and manage safety."
+      />
       <WorkerModePanel />
       {mode === "real_local" ? (
         <>
@@ -42,40 +46,88 @@ function SettingsPage() {
       ) : null}
       <SetupGuide />
       {mode === "demo" ? (
-      <Panel title="Mock worker">
-        <div className="space-y-5">
-          <div className="flex items-center justify-between">
-            <Label htmlFor="conn" className="flex flex-col items-start gap-1">
-              <span>Simulate worker connected</span>
-              <span className="text-xs font-normal text-muted-foreground">Turn off to test the disconnected state.</span>
-            </Label>
-            <Switch id="conn" checked={settings.workerSimulation === "connected"} onCheckedChange={(c) => actions.updateSettings({ workerSimulation: c ? "connected" : "disconnected" })} />
+        <Panel title="Mock worker">
+          <div className="space-y-5">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="conn" className="flex flex-col items-start gap-1">
+                <span>Simulate worker connected</span>
+                <span className="text-xs font-normal text-muted-foreground">
+                  Turn off to test the disconnected state.
+                </span>
+              </Label>
+              <Switch
+                id="conn"
+                checked={settings.workerSimulation === "connected"}
+                onCheckedChange={(c) =>
+                  actions.updateSettings({ workerSimulation: c ? "connected" : "disconnected" })
+                }
+              />
+            </div>
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span>Simulated action failure rate</span>
+                <span className="font-mono text-xs">{Math.round(settings.failureRate * 100)}%</span>
+              </div>
+              <Slider
+                min={0}
+                max={50}
+                step={5}
+                value={[Math.round(settings.failureRate * 100)]}
+                onValueChange={([v = 0]) => actions.updateSettings({ failureRate: v / 100 })}
+              />
+            </div>
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span>Step delay</span>
+                <span className="font-mono text-xs">{settings.stepDelayMs} ms</span>
+              </div>
+              <Slider
+                min={300}
+                max={4000}
+                step={100}
+                value={[settings.stepDelayMs]}
+                onValueChange={([v = 1200]) => actions.updateSettings({ stepDelayMs: v })}
+              />
+            </div>
+            <Button variant="outline" onClick={health} disabled={checking}>
+              {checking ? "Checking…" : "Run health check"}
+            </Button>
           </div>
-          <div className="space-y-2">
-            <div className="flex justify-between text-sm"><span>Simulated action failure rate</span><span className="font-mono text-xs">{Math.round(settings.failureRate * 100)}%</span></div>
-            <Slider min={0} max={50} step={5} value={[Math.round(settings.failureRate * 100)]} onValueChange={([v = 0]) => actions.updateSettings({ failureRate: v / 100 })} />
-          </div>
-          <div className="space-y-2">
-            <div className="flex justify-between text-sm"><span>Step delay</span><span className="font-mono text-xs">{settings.stepDelayMs} ms</span></div>
-            <Slider min={300} max={4000} step={100} value={[settings.stepDelayMs]} onValueChange={([v = 1200]) => actions.updateSettings({ stepDelayMs: v })} />
-          </div>
-          <Button variant="outline" onClick={health} disabled={checking}>{checking ? "Checking…" : "Run health check"}</Button>
-        </div>
-      </Panel>
+        </Panel>
       ) : null}
       <Panel title="Safety">
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm font-medium">Emergency stop</p>
-            <p className="text-xs text-muted-foreground">{estop ? "Engaged — new tasks are blocked." : "Not engaged."}</p>
+            <p className="text-xs text-muted-foreground">
+              {estop ? "Engaged — new tasks are blocked." : "Not engaged."}
+            </p>
           </div>
-          {estop ? <Button onClick={() => actions.resetEmergencyStop()}>Reset</Button> : <Button variant="destructive" onClick={() => actions.emergencyStop()}>Engage</Button>}
+          {estop ? (
+            <Button onClick={() => actions.resetEmergencyStop()}>Reset</Button>
+          ) : (
+            <Button variant="destructive" onClick={() => actions.emergencyStop()}>
+              Engage
+            </Button>
+          )}
         </div>
       </Panel>
       <Panel title="Data">
         <div className="flex items-center justify-between">
-          <p className="text-xs text-muted-foreground">Clears task history and restores example configuration in this browser.</p>
-          <Button variant="outline" onClick={() => { if (confirm("Reset all local DesktopPilot data?")) { actions.resetAll(); toast.success("Data reset"); } }}>Reset data</Button>
+          <p className="text-xs text-muted-foreground">
+            Clears task history and restores example configuration in this browser.
+          </p>
+          <Button
+            variant="outline"
+            onClick={() => {
+              if (confirm("Reset all local DesktopPilot data?")) {
+                actions.resetAll();
+                toast.success("Data reset");
+              }
+            }}
+          >
+            Reset data
+          </Button>
         </div>
       </Panel>
     </div>

@@ -8,11 +8,18 @@ import { TaskHistory } from "@/components/task-history";
 import { CurrentTask } from "@/components/current-task";
 import { ActivityTimeline } from "@/components/activity-timeline";
 import { Panel, PageHeader } from "@/components/panel";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useTicker } from "@/hooks/use-ticker";
 
 export const Route = createFileRoute("/tasks")({
-  head: () => pageMeta("Tasks", "Task history with status, duration, activity and final summaries."),
+  head: () =>
+    pageMeta("Tasks", "Task history with status, duration, activity and final summaries."),
   component: TasksPage,
 });
 
@@ -32,10 +39,16 @@ function TasksPage() {
         description="Every task with its configuration, status and outcome. Credentials are never stored here."
         actions={
           <Select value={filter} onValueChange={(v) => setFilter(v as typeof filter)}>
-            <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-48">
+              <SelectValue />
+            </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All statuses</SelectItem>
-              {(Object.keys(STATUS_LABEL) as TaskStatus[]).map((s) => <SelectItem key={s} value={s}>{STATUS_LABEL[s]}</SelectItem>)}
+              {(Object.keys(STATUS_LABEL) as TaskStatus[]).map((s) => (
+                <SelectItem key={s} value={s}>
+                  {STATUS_LABEL[s]}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         }
@@ -48,7 +61,9 @@ function TasksPage() {
           <CurrentTask task={selected} />
           {selected ? (
             <Panel title="Task activity">
-              <div className="max-h-96 overflow-y-auto"><ActivityTimeline events={activity.filter((a) => a.taskId === selected.id)} /></div>
+              <div className="max-h-96 overflow-y-auto">
+                <ActivityTimeline events={activity.filter((a) => a.taskId === selected.id)} />
+              </div>
             </Panel>
           ) : null}
         </div>

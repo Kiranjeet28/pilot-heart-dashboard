@@ -5,7 +5,13 @@ import { actions, useAppState } from "@/store/app-store";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Panel } from "./panel";
 
 export function TaskComposer() {
@@ -24,13 +30,15 @@ export function TaskComposer() {
   const [issues, setIssues] = useState<string[]>([]);
 
   useEffect(() => {
-    if (!providerId && providers.length) setProviderId(providers.find((p) => p.enabled)?.id ?? providers[0]!.id);
+    if (!providerId && providers.length)
+      setProviderId(providers.find((p) => p.enabled)?.id ?? providers[0]!.id);
     if (!targetId && targets.length) setTargetId(targets[0]!.id);
   }, [providers, targets, providerId, targetId]);
 
   const providerProfiles = profiles.filter((p) => p.providerId === providerId);
   useEffect(() => {
-    if (!providerProfiles.some((p) => p.id === profileId)) setProfileId(providerProfiles[0]?.id ?? "");
+    if (!providerProfiles.some((p) => p.id === profileId))
+      setProfileId(providerProfiles[0]?.id ?? "");
   }, [providerId, profiles]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const live = actions.readiness({ providerId, profileId, targetId });
@@ -43,7 +51,13 @@ export function TaskComposer() {
     }
     setIssues([]);
     setDescription("");
-    toast.success(start ? (mode === "demo" ? "Task started in demo mode" : "Task started on the real local worker") : "Draft saved");
+    toast.success(
+      start
+        ? mode === "demo"
+          ? "Task started in demo mode"
+          : "Task started on the real local worker"
+        : "Draft saved",
+    );
   }
 
   return (
@@ -59,27 +73,52 @@ export function TaskComposer() {
         <div className="grid gap-3 sm:grid-cols-3">
           <Field label="Provider">
             <Select value={providerId} onValueChange={setProviderId}>
-              <SelectTrigger><SelectValue placeholder="Select provider" /></SelectTrigger>
+              <SelectTrigger>
+                <SelectValue placeholder="Select provider" />
+              </SelectTrigger>
               <SelectContent>
                 {providers.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>{p.displayName}{p.enabled ? "" : " (disabled)"}</SelectItem>
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.displayName}
+                    {p.enabled ? "" : " (disabled)"}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </Field>
           <Field label="Profile">
-            <Select value={profileId} onValueChange={setProfileId} disabled={!providerProfiles.length}>
-              <SelectTrigger><SelectValue placeholder={providerProfiles.length ? "Select profile" : "No profile for provider"} /></SelectTrigger>
+            <Select
+              value={profileId}
+              onValueChange={setProfileId}
+              disabled={!providerProfiles.length}
+            >
+              <SelectTrigger>
+                <SelectValue
+                  placeholder={
+                    providerProfiles.length ? "Select profile" : "No profile for provider"
+                  }
+                />
+              </SelectTrigger>
               <SelectContent>
-                {providerProfiles.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                {providerProfiles.map((p) => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.name}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </Field>
           <Field label="Desktop target">
             <Select value={targetId} onValueChange={setTargetId}>
-              <SelectTrigger><SelectValue placeholder="Select target" /></SelectTrigger>
+              <SelectTrigger>
+                <SelectValue placeholder="Select target" />
+              </SelectTrigger>
               <SelectContent>
-                {targets.map((t) => <SelectItem key={t.id} value={t.id}>{t.displayName}</SelectItem>)}
+                {targets.map((t) => (
+                  <SelectItem key={t.id} value={t.id}>
+                    {t.displayName}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </Field>
@@ -88,16 +127,27 @@ export function TaskComposer() {
         {(issues.length ? issues : live).length ? (
           <ul className="space-y-1 rounded-md border border-warning/30 bg-warning/5 p-2.5">
             {(issues.length ? issues : live).map((i) => (
-              <li key={i} className="flex items-start gap-2 text-xs text-warning"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />{i}</li>
+              <li key={i} className="flex items-start gap-2 text-xs text-warning">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                {i}
+              </li>
             ))}
           </ul>
         ) : null}
 
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="font-mono text-[11px] text-muted-foreground">{mode === "demo" ? "Runs against the mock worker. No real desktop actions." : "REAL LOCAL: tasks only capture screenshots of your desktop in this milestone."}</p>
+          <p className="font-mono text-[11px] text-muted-foreground">
+            {mode === "demo"
+              ? "Runs against the mock worker. No real desktop actions."
+              : "REAL LOCAL: tasks only capture screenshots of your desktop in this milestone."}
+          </p>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => submit(false)}><Save className="h-4 w-4" /> Save draft</Button>
-            <Button onClick={() => submit(true)} disabled={live.length > 0}><Play className="h-4 w-4" /> Start Task</Button>
+            <Button variant="outline" onClick={() => submit(false)}>
+              <Save className="h-4 w-4" /> Save draft
+            </Button>
+            <Button onClick={() => submit(true)} disabled={live.length > 0}>
+              <Play className="h-4 w-4" /> Start Task
+            </Button>
           </div>
         </div>
       </div>
@@ -108,7 +158,9 @@ export function TaskComposer() {
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="space-y-1.5">
-      <Label className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">{label}</Label>
+      <Label className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
+        {label}
+      </Label>
       {children}
     </div>
   );
