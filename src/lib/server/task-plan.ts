@@ -352,7 +352,9 @@ async function generateDirectGeminiPlan(input: TaskPlanRequestInput): Promise<Pr
           contents: [{ role: "user", parts: [{ text: buildPrompt(input) }] }],
           generationConfig: {
             temperature: 0.2,
-            maxOutputTokens: MAX_PLAN_TOKENS,
+            // Gemini 2.5 "thinking" counts against this budget and truncated plans.
+            maxOutputTokens: 4096,
+            thinkingConfig: { thinkingBudget: 0 },
             responseMimeType: "application/json",
           },
         }),
