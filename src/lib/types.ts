@@ -46,6 +46,9 @@ export type TaskStatus =
   | "planning"
   | "running"
   | "waiting_for_approval"
+  | "awaiting_approval"
+  | "awaiting_input"
+  | "verifying"
   | "paused"
   | "completed"
   | "failed"
@@ -96,6 +99,12 @@ export interface ActivityEvent {
   real?: boolean;
 }
 
+export interface VerificationState {
+  status: "pending" | "passed" | "failed" | "unverified";
+  reason?: string;
+  checkedAt?: number;
+}
+
 export interface Task {
   id: string;
   description: string;
@@ -106,12 +115,16 @@ export interface Task {
   createdAt: number;
   startedAt?: number;
   endedAt?: number;
+  updatedAt?: number;
   progress: number; // 0-100
   steps: PlannedStep[];
   currentStep: number;
   retries: number;
   summary?: string;
   error?: string;
+  lastVerifiedResult?: string;
+  verification?: VerificationState;
+  currentAction?: ActionRequest;
   lastObservation?: { imageDataUrl: string; capturedAt: number; simulated: boolean; width?: number; height?: number; observationId?: string };
 }
 

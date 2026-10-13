@@ -123,6 +123,17 @@ See the detailed table in [`worker/visual-agent/README.md`](worker/visual-agent/
 | `423 failsafe_triggered` | Mouse hit a screen corner; reset the Emergency Stop |
 | Clicks land wrong | Use the main display (multi-monitor/DPI not supported yet) |
 
+## Module 3: AI provider and task orchestration
+
+DesktopPilot keeps the AI provider adapter separate from the desktop worker. The browser dashboard reads provider credentials from environment variables or credential references only; it never stores secrets in browser-local persistence or UI state. In a browser-only deployment the safest pattern is to keep GPT/OpenAI calls behind a tiny local API endpoint or serverless function, so the secret never reaches the client. This repository keeps the adapter logic in `src/lib/ai/provider.ts` and the task lifecycle helpers in `src/lib/tasks/*` so the worker remains allowlisted and the planner can be swapped without changing the worker contract.
+
+Provider configuration examples:
+
+```sh
+export OPENAI_API_KEY="sk-..."
+# or set the credential ref name in the dashboard and resolve it in your secure local backend
+```
+
 ## Project layout
 
 ```
