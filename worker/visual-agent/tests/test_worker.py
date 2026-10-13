@@ -200,3 +200,16 @@ def test_log_redaction(caplog):
     with caplog.at_level(logging.INFO):
         logger.info("got %s", tok)
     assert tok not in caplog.text
+
+
+def test_port_probe_detects_a_busy_port():
+    import socket
+
+    from desktoppilot_worker.__main__ import port_in_use
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as held:
+        held.bind(("127.0.0.1", 0))
+        held.listen()
+        port = held.getsockname()[1]
+        assert port_in_use(port) is True
+    assert port_in_use(port) is False
