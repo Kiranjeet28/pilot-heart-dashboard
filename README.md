@@ -125,9 +125,9 @@ See the detailed table in [`worker/visual-agent/README.md`](worker/visual-agent/
 
 ## Module 3: Gemini-backed task orchestration
 
-DesktopPilot keeps the AI provider adapter separate from the desktop worker. Gemini is the default provider, and the API key is read only on the trusted local backend; the browser never gets a private key. The dashboard calls a server endpoint such as `/api/tasks/plan`, and the server uses the official Google GenAI SDK to call Gemini before returning only the validated plan and next action.
+DesktopPilot keeps the AI provider adapter separate from the desktop worker. Gemini is the default provider, and the API key is read only on the trusted local backend; the browser never gets a private key. The dashboard calls `/api/tasks/plan`, and the server uses the official Google GenAI SDK to call Gemini before returning a bounded, schema-validated plan. The task runner then validates every action, applies target approval policy, executes through the paired worker, captures post-action observations, and requires verification before advancing.
 
-This project keeps the adapter logic in `src/lib/ai/provider.ts` and the task lifecycle helpers in `src/lib/tasks/*` so the worker remains allowlisted and the planner can be swapped without changing the worker contract.
+This project keeps the adapter logic in `src/lib/ai/provider.ts` and the task lifecycle helpers in `src/lib/tasks/*` so the worker remains allowlisted and the planner can be swapped without changing the worker contract. Demo mode uses the mock provider and worker through the same orchestration path; OpenAI, Anthropic, and custom providers remain explicitly unsupported.
 
 Backend configuration example:
 
@@ -135,6 +135,8 @@ Backend configuration example:
 export GEMINI_API_KEY="replace_with_your_key"
 export GEMINI_MODEL="gemini-2.5-flash"
 ```
+
+For local server configuration, copy `.env.example` to `.env` and provide a real key only in the trusted server environment. Never use `VITE_GEMINI_API_KEY`, commit `.env`, or place credentials in browser storage.
 
 ## Project layout
 

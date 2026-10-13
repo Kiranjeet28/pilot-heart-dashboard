@@ -3,14 +3,14 @@ import { GoogleGenAI } from "@google/genai";
 import { normalizeProviderResponse } from "@/lib/ai/provider";
 
 export interface TaskPlanRequestInput {
-  taskId?: string;
+  taskId?: string | undefined;
   userRequest: string;
-  targetId?: string;
-  providerId?: string;
-  profileId?: string;
-  context?: string[];
-  modelOverride?: string;
-  timeoutMs?: number;
+  targetId?: string | undefined;
+  providerId?: string | undefined;
+  profileId?: string | undefined;
+  context?: string[] | undefined;
+  modelOverride?: string | undefined;
+  timeoutMs?: number | undefined;
 }
 
 const taskPlanRequestSchema = z.object({
@@ -25,7 +25,7 @@ const taskPlanRequestSchema = z.object({
 });
 
 function getServerToken(): string | null {
-  const token = process.env.DESKTOPPILOT_SERVER_TOKEN?.trim();
+  const token = process.env["DESKTOPPILOT_SERVER_TOKEN"]?.trim();
   return token && token.length > 0 ? token : null;
 }
 
@@ -95,24 +95,23 @@ function buildPrompt(input: TaskPlanRequestInput): string {
     "{",
     '  "plan": ["step 1 description", "step 2 description"],',
     '  "summary": "short summary",',
-    '  "nextAction": { "kind": "read_screen", "targetId": "desktop", "description": "inspect the desktop", "requiresApproval": false },',
-    '  "requiresApproval": false',
+    '  "steps": [{ "action": { "kind": "read_screen", "targetId": "desktop", "description": "inspect the desktop" }, "requiresApproval": false, "verification": { "kind": "screen_capture" } }]',
     "}",
     "Choose only safe desktop actions from this allowlist: focus_window, read_screen, click, type_text, key_press, wait, copy_selection, paste.",
     `Task: ${safeRequest}${contextText}`,
-    "Keep the plan bounded and realistic for DesktopPilot. Prefer readable short steps, include verification, and avoid unsafe or destructive actions.",
+    "Keep the plan bounded to at most 12 steps and realistic for DesktopPilot. Include verification for every step and avoid unsafe or destructive actions.",
     "The response must be parseable by JSON.parse without commentary or markdown fences.",
   ].join("\n");
 }
 
 export async function generateGeminiTaskPlan(input: TaskPlanRequestInput): Promise<unknown> {
-  const apiKey = process.env.GEMINI_API_KEY ?? process.env.GOOGLE_API_KEY;
+  const apiKey = process.env["GEMINI_API_KEY"] ?? process.env["GOOGLE_API_KEY"];
   if (!apiKey) {
     throw Object.assign(new Error("Missing GEMINI_API_KEY server environment variable."), {
       code: "missing_credentials",
     });
   }
-  const model = input.modelOverride ?? process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
+  const model = input.modelOverride ?? process.env["GEMINI_MODEL"] ?? "gemini-2.5-flash";
   const ai = new GoogleGenAI({ apiKey });
   const timeoutMs = input.timeoutMs ?? 30000;
   const result = await Promise.race([

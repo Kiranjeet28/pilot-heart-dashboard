@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { AccountProfile, ActionRequest, Provider } from "@/lib/types";
+import type { AccountProfile, ActionRequest, Provider, VerificationSpec } from "@/lib/types";
 
 export type ProviderErrorCode =
   | "missing_credentials"
@@ -27,6 +27,11 @@ export interface ProviderResult {
   summary: string;
   nextAction?: ActionRequest | null;
   requiresApproval?: boolean;
+  steps: Array<{
+    action: ActionRequest;
+    requiresApproval: boolean;
+    verification?: VerificationSpec;
+  }>;
   raw?: unknown;
 }
 
@@ -45,33 +50,62 @@ export interface ProviderAdapter {
   getNextStep(request: AIRequest): Promise<AIProviderResult>;
 }
 
-const actionSchema = z.object({
-  kind: z.enum([
-    "focus_window",
-    "read_screen",
-    "click",
-    "type_text",
-    "key_press",
-    "wait",
-    "copy_selection",
-    "paste",
-  ]),
-  targetId: z.string().min(1),
-  description: z.string().min(1).max(600),
-  text: z.string().max(5000).optional(),
-  x: z.number().int().min(0).max(60000).optional(),
-  y: z.number().int().min(0).max(60000).optional(),
-  keys: z.string().max(50).optional(),
-  durationMs: z.number().int().min(0).max(60000).optional(),
-  observationId: z.string().optional(),
-  requiresApproval: z.boolean().optional(),
-});
+const actionSchema = z
+  .object({
+    kind: z.enum([
+      "focus_window",
+      "read_screen",
+      "click",
+      "type_text",
+      "key_press",
+      "wait",
+      "copy_selection",
+      "paste",
+    ]),
+    targetId: z.string().min(1),
+    description: z.string().min(1).max(600),
+    text: z.string().max(5000).optional(),
+    x: z.number().int().min(0).max(60000).optional(),
+    y: z.number().int().min(0).max(60000).optional(),
+    keys: z.string().max(50).optional(),
+    durationMs: z.number().int().min(0).max(60000).optional(),
+    observationId: z.string().optional(),
+    requiresApproval: z.boolean().optional(),
+  })
+  .transform(({ requiresApproval: _requiresApproval, ...action }): ActionRequest => ({
+    kind: action.kind,
+    targetId: action.targetId,
+    description: action.description,
+    ...(action.text !== undefined ? { text: action.text } : {}),
+    ...(action.x !== undefined ? { x: action.x } : {}),
+    ...(action.y !== undefined ? { y: action.y } : {}),
+    ...(action.keys !== undefined ? { keys: action.keys } : {}),
+    ...(action.durationMs !== undefined ? { durationMs: action.durationMs } : {}),
+    ...(action.observationId !== undefined ? { observationId: action.observationId } : {}),
+  }));
 
 const responseSchema = z.object({
   plan: z.array(z.string()).default([]),
   summary: z.string().min(1).max(2000).optional(),
   nextAction: actionSchema.optional().nullable(),
   requiresApproval: z.boolean().optional(),
+  steps: z
+    .array(
+      z.object({
+        action: actionSchema,
+        requiresApproval: z.boolean().optional(),
+        verification: z
+          .object({
+            kind: z.enum(["worker_ok", "screen_capture", "text_match", "clipboard"]),
+            expectedText: z.string().max(2000).optional(),
+            allowPartial: z.boolean().optional(),
+          })
+          .optional(),
+      }),
+    )
+    .max(12)
+    .optional()
+    .default([]),
 });
 
 export function normalizeProviderResponse(data: unknown): ProviderResult {
@@ -83,12 +117,39 @@ export function normalizeProviderResponse(data: unknown): ProviderResult {
     );
   }
   const output = payload.data;
+  const steps = output.steps.length
+    ? output.steps.map((step) => ({
+        action: step.action,
+        requiresApproval: Boolean(step.requiresApproval ?? output.requiresApproval),
+        ...(step.verification
+          ? {
+              verification: {
+                kind: step.verification.kind,
+                ...(step.verification.expectedText !== undefined
+                  ? { expectedText: step.verification.expectedText }
+                  : {}),
+                ...(step.verification.allowPartial !== undefined
+                  ? { allowPartial: step.verification.allowPartial }
+                  : {}),
+              },
+            }
+          : {}),
+      }))
+    : output.nextAction
+      ? [
+          {
+            action: output.nextAction,
+            requiresApproval: Boolean(output.requiresApproval),
+          },
+        ]
+      : [];
   return {
     ok: true,
     plan: output.plan.length ? output.plan : [output.summary ?? "Continue the task."],
     summary: output.summary ?? output.nextAction?.description ?? "Continue the task.",
     nextAction: output.nextAction ?? null,
     requiresApproval: Boolean(output.requiresApproval),
+    steps,
     raw: parsed,
   };
 }
@@ -104,12 +165,12 @@ function makeProviderFailure(
 function extractResponseMessage(data: unknown): string {
   if (!data || typeof data !== "object") return "Unexpected provider response";
   const record = data as Record<string, unknown>;
-  if (typeof record.error === "string") return record.error;
-  if (record.error && typeof record.error === "object") {
-    const message = (record.error as Record<string, unknown>).message;
+  if (typeof record["error"] === "string") return record["error"];
+  if (record["error"] && typeof record["error"] === "object") {
+    const message = (record["error"] as Record<string, unknown>)["message"];
     if (typeof message === "string") return message;
   }
-  if (typeof record.message === "string") return record.message;
+  if (typeof record["message"] === "string") return record["message"];
   return "Unexpected provider response";
 }
 
@@ -188,6 +249,23 @@ export class MockAIProvider implements ProviderAdapter {
       summary: "Mock plan ready for tests.",
       nextAction,
       requiresApproval: false,
+      steps: [
+        { action: nextAction, requiresApproval: false, verification: { kind: "screen_capture" } },
+      ],
+    };
+  }
+}
+
+class UnsupportedProvider implements ProviderAdapter {
+  readonly type = "custom" as const;
+  constructor(readonly name: string) {}
+
+  async getNextStep(): Promise<ProviderFailure> {
+    return {
+      ok: false,
+      code: "unknown",
+      message: `${this.name} is not implemented. Select Gemini or enable demo mode.`,
+      retryable: false,
     };
   }
 }
@@ -198,6 +276,5 @@ export function createAIProvider(
   overrides?: { apiKey?: string; timeoutMs?: number },
 ): ProviderAdapter {
   if (provider.type === "gemini") return new GeminiProvider();
-  if (provider.type === "openai") return new MockAIProvider();
-  return new MockAIProvider();
+  return new UnsupportedProvider(provider.displayName);
 }

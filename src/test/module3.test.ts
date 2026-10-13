@@ -10,7 +10,9 @@ import {
 import { handleTaskPlanRequest } from "@/lib/server/task-plan";
 import { canTransition } from "@/lib/tasks/state-machine";
 import { createTask, transitionTask } from "@/lib/tasks/task-manager";
-import { verifyTextMatch } from "@/lib/tasks/verification";
+import { normalizeProviderPlan } from "@/lib/tasks/planner";
+import { verifyActionOutcome, verifyTextMatch } from "@/lib/tasks/verification";
+import { DEFAULT_TARGETS } from "@/lib/registry/defaults";
 
 vi.mock("@google/genai", () => ({
   GoogleGenAI: class {
@@ -57,6 +59,40 @@ describe("task manager and verification", () => {
   it("records verification results when text matches", () => {
     const result = verifyTextMatch("hello", "hello");
     expect(result.status).toBe("passed");
+  });
+
+  it("normalizes provider steps and applies assisted-target approval", () => {
+    const result = normalizeProviderPlan(
+      {
+        ok: true,
+        plan: ["Type a harmless sentence"],
+        summary: "Type a sentence",
+        steps: [
+          {
+            action: {
+              kind: "type_text",
+              targetId: "vscode",
+              text: "hello",
+              description: "Type hello",
+            },
+            requiresApproval: false,
+            verification: { kind: "worker_ok" },
+          },
+        ],
+      },
+      DEFAULT_TARGETS[0]!,
+      ["type_text"],
+    );
+    expect(result[0]?.requiresApproval).toBe(true);
+  });
+
+  it("does not treat a failed worker result as verified", () => {
+    const result = verifyActionOutcome(
+      { kind: "click", targetId: "vscode", x: 1, y: 1, description: "Click" },
+      { ok: false, message: "worker stopped" },
+      { kind: "worker_ok" },
+    );
+    expect(result.status).toBe("failed");
   });
 });
 
@@ -115,22 +151,22 @@ describe("AI provider adapter", () => {
 });
 
 describe("secure Gemini task-plan endpoint", () => {
-  const originalToken = process.env.DESKTOPPILOT_SERVER_TOKEN;
-  const originalKey = process.env.GEMINI_API_KEY;
+  const originalToken = process.env["DESKTOPPILOT_SERVER_TOKEN"];
+  const originalKey = process.env["GEMINI_API_KEY"];
 
   afterEach(() => {
-    if (originalToken === undefined) delete process.env.DESKTOPPILOT_SERVER_TOKEN;
-    else process.env.DESKTOPPILOT_SERVER_TOKEN = originalToken;
+    if (originalToken === undefined) delete process.env["DESKTOPPILOT_SERVER_TOKEN"];
+    else process.env["DESKTOPPILOT_SERVER_TOKEN"] = originalToken;
 
-    if (originalKey === undefined) delete process.env.GEMINI_API_KEY;
-    else process.env.GEMINI_API_KEY = originalKey;
+    if (originalKey === undefined) delete process.env["GEMINI_API_KEY"];
+    else process.env["GEMINI_API_KEY"] = originalKey;
 
     vi.unstubAllGlobals();
   });
 
   it("rejects cross-site requests and missing configuration", async () => {
-    delete process.env.DESKTOPPILOT_SERVER_TOKEN;
-    delete process.env.GEMINI_API_KEY;
+    delete process.env["DESKTOPPILOT_SERVER_TOKEN"];
+    delete process.env["GEMINI_API_KEY"];
 
     const response = await handleTaskPlanRequest(
       new Request("https://example.com/api/tasks/plan", {
@@ -148,8 +184,8 @@ describe("secure Gemini task-plan endpoint", () => {
   });
 
   it("allows same-origin browser requests without embedding secrets", async () => {
-    delete process.env.DESKTOPPILOT_SERVER_TOKEN;
-    process.env.GEMINI_API_KEY = "test-gemini-key";
+    delete process.env["DESKTOPPILOT_SERVER_TOKEN"];
+    process.env["GEMINI_API_KEY"] = "test-gemini-key";
 
     const response = await handleTaskPlanRequest(
       new Request("http://localhost:3000/api/tasks/plan", {
@@ -169,8 +205,8 @@ describe("secure Gemini task-plan endpoint", () => {
   });
 
   it("accepts a configured backend token for internal clients", async () => {
-    process.env.DESKTOPPILOT_SERVER_TOKEN = "server-token-123";
-    process.env.GEMINI_API_KEY = "test-gemini-key";
+    process.env["DESKTOPPILOT_SERVER_TOKEN"] = "server-token-123";
+    process.env["GEMINI_API_KEY"] = "test-gemini-key";
 
     const response = await handleTaskPlanRequest(
       new Request("http://localhost:3000/api/tasks/plan", {

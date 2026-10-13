@@ -33,7 +33,11 @@ export function transitionTask(task: Task, nextStatus: TaskStatus): Task {
     ...task,
     status: nextStatus,
     updatedAt: Date.now(),
-    endedAt: isTerminal(nextStatus) ? Date.now() : task.endedAt,
+    ...(isTerminal(nextStatus)
+      ? { endedAt: Date.now() }
+      : task.endedAt === undefined
+        ? {}
+        : { endedAt: task.endedAt }),
   };
 }
 
@@ -53,8 +57,12 @@ export function recordVerification(
 ): Task {
   return {
     ...task,
-    verification: { status, reason, checkedAt: Date.now() },
-    lastVerifiedResult: status === "passed" ? (reason ?? "Verified") : undefined,
+    verification: {
+      status,
+      ...(reason === undefined ? {} : { reason }),
+      checkedAt: Date.now(),
+    },
+    ...(status === "passed" ? { lastVerifiedResult: reason ?? "Verified" } : {}),
     updatedAt: Date.now(),
   };
 }

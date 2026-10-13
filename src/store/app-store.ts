@@ -19,7 +19,9 @@ import {
   DEFAULT_TARGETS,
 } from "@/lib/registry/defaults";
 import { canTransition, isActive } from "@/lib/tasks/state-machine";
-import { planDemoSteps, planRealObserveSteps } from "@/lib/tasks/planner";
+import { normalizeProviderPlan } from "@/lib/tasks/planner";
+import { createAIProvider, MockAIProvider } from "@/lib/ai/provider";
+import { verifyActionOutcome } from "@/lib/tasks/verification";
 import { validateAction } from "@/lib/worker/action-validation";
 import { MockDesktopWorker } from "@/lib/worker/mock-worker";
 import type { ActionResult, DesktopWorker, ObservationResult } from "@/lib/worker/worker";
@@ -204,6 +206,7 @@ async function tick(id: string) {
   const sim = w.mode === "demo";
   const tag = sim ? "[SIMULATED]" : "[REAL]";
   try {
+    if (t.deadlineAt && Date.now() >= t.deadlineAt) return fail(id, "Task execution timed out");
     if (t.status === "queued") {
       const h = await w.healthCheck();
       if (getTask(id)?.status !== "queued") return;
@@ -234,16 +237,33 @@ async function tick(id: string) {
     if (t.status === "planning") {
       const target = state.targets.find((x) => x.id === t.targetId);
       if (!target) return fail(id, "Desktop target no longer exists");
-      const steps = sim ? planDemoSteps(t.description, target) : planRealObserveSteps(target);
+      const provider = state.providers.find((x) => x.id === t.providerId);
+      const profile = state.profiles.find((x) => x.id === t.profileId);
+      if (!provider || !profile) return fail(id, "Task provider or profile no longer exists");
+      log(id, "info", sim ? "Planning with mock provider" : "Planning with Gemini");
+      const planned = sim
+        ? await new MockAIProvider().getNextStep({
+            taskId: id,
+            userRequest: t.description,
+            targetId: t.targetId,
+            provider,
+            profile,
+          })
+        : await createAIProvider(provider, profile).getNextStep({
+            taskId: id,
+            userRequest: t.description,
+            targetId: t.targetId,
+            provider,
+            profile,
+            context: t.lastVerifiedResult ? [t.lastVerifiedResult] : [],
+          });
+      if (getTask(id)?.status !== "planning" || state.emergencyStop) return;
+      if (!planned.ok)
+        return fail(id, `${provider.displayName} planning failed: ${planned.message}`);
+      const capabilities = !sim && w.getCapabilities ? await w.getCapabilities() : undefined;
+      const steps = normalizeProviderPlan(planned, target, capabilities?.actions);
       transition(id, "running", { steps, currentStep: 0 });
-      log(
-        id,
-        "info",
-        sim
-          ? `Plan ready: ${steps.length} simulated steps`
-          : `Plan ready: ${steps.length} real observation steps. Real input actions are limited to the guided Notepad test in this milestone.`,
-        sim,
-      );
+      log(id, "info", `Plan ready: ${steps.length} ${sim ? "simulated" : "Gemini"} steps`, sim);
       return schedule(id);
     }
     if (t.status !== "running") return;
@@ -281,12 +301,27 @@ async function tick(id: string) {
       log(id, "approval", `Approval required: ${step.action.description}`);
       return;
     }
-    const v = validateAction(step.action, { strict: !sim });
+    let action = step.action;
+    if (!sim && action.kind === "click" && !action.observationId) {
+      const before = await w.observe({
+        taskId: id,
+        targetId: t.targetId,
+        targetLabel: state.targets.find((x) => x.id === t.targetId)?.displayName ?? t.targetId,
+        note: "Fresh observation before coordinate action",
+      });
+      if (getTask(id)?.status !== "running" || state.emergencyStop) return;
+      action = before.observationId ? { ...action, observationId: before.observationId } : action;
+      patchTask(id, {
+        steps: getTask(id)!.steps.map((s, i) => (i === t.currentStep ? { ...s, action } : s)),
+      });
+    }
+    const v = validateAction(action, { strict: !sim, screen: state.connection.screen });
     if (!v.ok) return fail(id, `Action rejected by validator: ${v.reason}`);
-    log(id, "action", `${tag} ${step.action.description}`, sim, !sim);
+    patchTask(id, { currentAction: action, verification: { status: "pending" } });
+    log(id, "action", `${tag} ${action.description}`, sim, !sim);
     let realObs: ObservationResult | undefined;
     let result: ActionResult;
-    if (!sim && step.action.kind === "read_screen") {
+    if (!sim && action.kind === "read_screen") {
       realObs = await w.observe({ taskId: id, targetId: t.targetId, targetLabel: t.targetId });
       result = {
         ok: true,
@@ -307,16 +342,47 @@ async function tick(id: string) {
       }
       return fail(id, `${result.message} after 2 retries`);
     }
-    const obs = sim
-      ? await w.observe({
-          taskId: id,
-          targetId: t.targetId,
-          targetLabel: state.targets.find((x) => x.id === t.targetId)?.displayName ?? t.targetId,
-          note: step.action.description,
-        })
-      : realObs;
+    const obs =
+      sim || !realObs
+        ? await w.observe({
+            taskId: id,
+            targetId: t.targetId,
+            targetLabel: state.targets.find((x) => x.id === t.targetId)?.displayName ?? t.targetId,
+            note: action.description,
+          })
+        : realObs;
     if (getTask(id)?.status !== "running") return;
+    transition(id, "verifying");
+    const verification = verifyActionOutcome(
+      action,
+      {
+        ok: result.ok,
+        message: result.message,
+        result: obs?.imageDataUrl,
+        ...(result.data ? { data: result.data } : {}),
+      },
+      step.verification,
+    );
+    if (getTask(id)?.status !== "verifying") return;
+    if (verification.status !== "passed") {
+      patchTask(id, {
+        verification: {
+          status: verification.status,
+          reason: verification.reason,
+          checkedAt: Date.now(),
+        },
+      });
+      const cur = getTask(id)!;
+      if (cur.retries < 2) {
+        patchTask(id, { retries: cur.retries + 1 });
+        transition(id, "running");
+        log(id, "warning", `${verification.reason} Retrying (${cur.retries}/2)…`, sim);
+        return schedule(id);
+      }
+      return fail(id, `${verification.reason} after 2 verification retries`);
+    }
     const next = t.currentStep + 1;
+    transition(id, "running");
     patchTask(id, {
       currentStep: next,
       retries: 0,
@@ -332,6 +398,9 @@ async function tick(id: string) {
             },
           }
         : {}),
+      verification: { status: "passed", reason: verification.reason, checkedAt: Date.now() },
+      lastVerifiedResult: verification.evidence ?? verification.reason,
+      currentAction: undefined,
     });
     log(id, "result", `${sim ? "" : "[REAL] "}${result.message}`, sim, !sim);
     schedule(id);
@@ -420,6 +489,8 @@ export const actions = {
       steps: [],
       currentStep: 0,
       retries: 0,
+      replans: 0,
+      deadlineAt: Date.now() + 10 * 60 * 1000,
     };
     set((s) => ({ tasks: [task, ...s.tasks] }));
     log(task.id, "info", start ? "Task created" : "Draft saved", false);

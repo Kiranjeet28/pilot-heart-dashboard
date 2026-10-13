@@ -42,7 +42,11 @@ export interface ActionResult {
   message: string;
   simulated: boolean;
   completedAt: number;
-  data?: { clipboardLength?: number; typedLength?: number };
+  data?: {
+    clipboardLength?: number;
+    typedLength?: number;
+    clipboardSha256Prefix?: string;
+  };
 }
 
 export interface WorkerCapabilities {

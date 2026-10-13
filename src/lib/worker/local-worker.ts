@@ -82,6 +82,7 @@ const ActionSchema = z.object({
   completed_at: z.number(),
   clipboard_length: z.number().optional(),
   typed_length: z.number().optional(),
+  clipboard_sha256_prefix: z.string().optional(),
 });
 const CapsSchema = z.object({
   actions: z.array(z.string()),
@@ -297,6 +298,7 @@ export class LocalHttpWorker implements DesktopWorker {
       data: {
         ...(r.clipboard_length != null ? { clipboardLength: r.clipboard_length } : {}),
         ...(r.typed_length != null ? { typedLength: r.typed_length } : {}),
+        ...(r.clipboard_sha256_prefix ? { clipboardSha256Prefix: r.clipboard_sha256_prefix } : {}),
       },
     };
   }

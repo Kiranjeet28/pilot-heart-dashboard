@@ -1,4 +1,4 @@
-import type { ActionKind, ActionRequest } from "@/lib/types";
+import type { ActionKind, ActionRequest, VerificationSpec } from "@/lib/types";
 
 export type VerificationStatus = "pending" | "passed" | "failed" | "unverified";
 
@@ -40,10 +40,48 @@ export function verifyTextMatch(
 
 export function verifyActionOutcome(
   action: ActionRequest,
-  observed: { ok: boolean; message?: string; text?: string; result?: string | null },
+  observed: {
+    ok: boolean;
+    message?: string;
+    text?: string;
+    result?: string | null;
+    data?: { clipboardLength?: number; typedLength?: number };
+  },
+  spec?: VerificationSpec,
 ): VerificationResult {
   if (!observed.ok) {
     return { status: "failed", reason: observed.message ?? `The ${action.kind} action failed.` };
+  }
+  if (spec?.kind === "worker_ok") {
+    if (
+      action.kind === "type_text" &&
+      action.text !== undefined &&
+      observed.data?.typedLength !== undefined &&
+      observed.data.typedLength !== action.text.length
+    ) {
+      return { status: "failed", reason: "The worker typed a different number of characters." };
+    }
+    return {
+      status: "passed",
+      reason: "The worker returned a successful action result.",
+      evidence: observed.message ?? "worker_ok",
+    };
+  }
+  if (spec?.kind === "text_match") {
+    return verifyTextMatch(
+      spec.expectedText ?? "",
+      observed.text ?? "",
+      spec.allowPartial === undefined ? undefined : { allowPartial: spec.allowPartial },
+    );
+  }
+  if (spec?.kind === "clipboard" || action.kind === "copy_selection") {
+    return observed.data?.clipboardLength != null
+      ? {
+          status: "passed",
+          reason: "Clipboard metadata was returned by the worker.",
+          evidence: `length=${observed.data.clipboardLength}`,
+        }
+      : { status: "unverified", reason: "The worker returned no clipboard evidence." };
   }
   if (action.kind === "type_text" && typeof action.text === "string") {
     return verifyTextMatch(action.text, observed.text ?? "", { allowPartial: false });

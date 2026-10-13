@@ -1,5 +1,6 @@
-// Demo planner: deterministic step plan. Will be replaced by a real AI provider call.
-import type { DesktopTarget, PlannedStep } from "@/lib/types";
+import type { ProviderResult } from "@/lib/ai/provider";
+import { validateAction } from "@/lib/worker/action-validation";
+import type { ActionKind, DesktopTarget, PlannedStep } from "@/lib/types";
 
 let n = 0;
 const sid = () => `step_${Date.now().toString(36)}_${(n++).toString(36)}`;
@@ -79,4 +80,48 @@ export function planRealObserveSteps(target: DesktopTarget): PlannedStep[] {
       action: { kind: "read_screen", targetId: t, description: "Capture follow-up screenshot" },
     },
   ];
+}
+
+const INPUT_ACTIONS: ActionKind[] = [
+  "focus_window",
+  "click",
+  "type_text",
+  "key_press",
+  "copy_selection",
+  "paste",
+];
+
+export function normalizeProviderPlan(
+  result: ProviderResult,
+  target: DesktopTarget,
+  supportedActions?: readonly string[],
+): PlannedStep[] {
+  if (!result.steps.length) throw new Error("The provider returned an empty task plan.");
+  if (result.steps.length > 12) throw new Error("The provider returned too many task steps.");
+
+  return result.steps.map((step, index) => {
+    if (step.action.targetId !== target.id)
+      throw new Error(`Plan step ${index + 1} targets an unselected desktop.`);
+    if (
+      supportedActions &&
+      step.action.kind !== "read_screen" &&
+      !supportedActions.includes(step.action.kind)
+    )
+      throw new Error(`Plan step ${index + 1} uses an unsupported worker action.`);
+    if (target.interactionMode === "observe_only" && INPUT_ACTIONS.includes(step.action.kind))
+      throw new Error(`Target "${target.displayName}" only permits observation.`);
+    const validation = validateAction(step.action);
+    if (!validation.ok) throw new Error(`Plan step ${index + 1} is invalid: ${validation.reason}`);
+
+    const policyRequiresApproval =
+      target.interactionMode !== "autonomous" && INPUT_ACTIONS.includes(step.action.kind);
+    return {
+      id: sid(),
+      action: step.action,
+      requiresApproval: policyRequiresApproval || step.requiresApproval,
+      verification: step.verification ?? {
+        kind: step.action.kind === "read_screen" ? "screen_capture" : "worker_ok",
+      },
+    };
+  });
 }

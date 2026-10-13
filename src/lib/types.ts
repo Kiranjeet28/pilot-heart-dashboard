@@ -83,6 +83,15 @@ export interface PlannedStep {
   requiresApproval: boolean;
   approved?: boolean;
   done?: boolean;
+  verification?: VerificationSpec;
+}
+
+export type VerificationKind = "worker_ok" | "screen_capture" | "text_match" | "clipboard";
+
+export interface VerificationSpec {
+  kind: VerificationKind;
+  expectedText?: string;
+  allowPartial?: boolean;
 }
 
 export type ActivityKind =
@@ -102,8 +111,8 @@ export interface ActivityEvent {
 
 export interface VerificationState {
   status: "pending" | "passed" | "failed" | "unverified";
-  reason?: string;
-  checkedAt?: number;
+  reason?: string | undefined;
+  checkedAt?: number | undefined;
 }
 
 export interface Task {
@@ -115,17 +124,19 @@ export interface Task {
   status: TaskStatus;
   createdAt: number;
   startedAt?: number;
-  endedAt?: number;
-  updatedAt?: number;
+  endedAt?: number | undefined;
+  updatedAt?: number | undefined;
   progress: number; // 0-100
   steps: PlannedStep[];
   currentStep: number;
   retries: number;
+  replans?: number;
+  deadlineAt?: number;
   summary?: string;
   error?: string;
   lastVerifiedResult?: string;
   verification?: VerificationState;
-  currentAction?: ActionRequest;
+  currentAction?: ActionRequest | undefined;
   lastObservation?: {
     imageDataUrl: string;
     capturedAt: number;
