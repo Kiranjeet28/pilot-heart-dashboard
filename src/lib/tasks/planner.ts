@@ -116,22 +116,22 @@ export function normalizeProviderPlan(
       throw new Error(`Plan step ${index + 1} targets an unselected desktop.`);
     if (
       supportedActions &&
-      step.action.kind !== "read_screen" &&
-      !supportedActions.includes(step.action.kind)
+      action.kind !== "read_screen" &&
+      !supportedActions.includes(action.kind)
     )
       throw new Error(`Plan step ${index + 1} uses an unsupported worker action.`);
     if (step.verification?.kind === "text_match" && !step.verification.expectedText?.trim())
       throw new Error(`Plan step ${index + 1} uses text_match verification without expected text.`);
-    if (target.interactionMode === "observe_only" && INPUT_ACTIONS.includes(step.action.kind))
+    if (target.interactionMode === "observe_only" && INPUT_ACTIONS.includes(action.kind))
       throw new Error(`Target "${target.displayName}" only permits observation.`);
-    const validation = validateAction(step.action);
+    const validation = validateAction(action);
     if (!validation.ok) throw new Error(`Plan step ${index + 1} is invalid: ${validation.reason}`);
 
     const policyRequiresApproval =
-      target.interactionMode !== "autonomous" && INPUT_ACTIONS.includes(step.action.kind);
+      target.interactionMode !== "autonomous" && INPUT_ACTIONS.includes(action.kind);
     return {
       id: sid(),
-      action: step.action,
+      action,
       requiresApproval: policyRequiresApproval || step.requiresApproval,
       verification: step.verification ?? {
         kind: step.action.kind === "read_screen" ? "screen_capture" : "worker_ok",
