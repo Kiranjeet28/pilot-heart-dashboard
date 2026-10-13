@@ -7,27 +7,31 @@ import {
   createAIProvider,
   normalizeProviderResponse,
 } from "@/lib/ai/provider";
-import { handleTaskPlanRequest } from "@/lib/server/task-plan";
+import { handleTaskPlanRequest, isRateLimited } from "@/lib/server/task-plan";
 import { canTransition } from "@/lib/tasks/state-machine";
 import { createTask, transitionTask } from "@/lib/tasks/task-manager";
 import { normalizeProviderPlan } from "@/lib/tasks/planner";
 import { verifyActionOutcome, verifyTextMatch } from "@/lib/tasks/verification";
 import { DEFAULT_TARGETS } from "@/lib/registry/defaults";
 
+const mockGenaiState = vi.hoisted(() => ({
+  response: {
+    plan: ["Inspect the desktop state", "Confirm the result"],
+    summary: "Safe desktop review",
+    nextAction: {
+      kind: "read_screen",
+      targetId: "desktop",
+      description: "Inspect the desktop state",
+    },
+    requiresApproval: false,
+  },
+}));
+
 vi.mock("@google/genai", () => ({
   GoogleGenAI: class {
     models = {
       generateContent: vi.fn(async () => ({
-        text: JSON.stringify({
-          plan: ["Inspect the desktop state", "Confirm the result"],
-          summary: "Safe desktop review",
-          nextAction: {
-            kind: "read_screen",
-            targetId: "desktop",
-            description: "Inspect the desktop state",
-          },
-          requiresApproval: false,
-        }),
+        text: JSON.stringify(mockGenaiState.response),
       })),
     };
   },
