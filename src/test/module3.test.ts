@@ -203,6 +203,7 @@ describe("AI provider adapter", () => {
 describe("secure AI task-plan endpoint", () => {
   const originalToken = process.env["DESKTOPPILOT_SERVER_TOKEN"];
   const originalGatewayKey = process.env["LOVABLE_API_KEY"];
+  const originalGeminiKey = process.env["GEMINI_API_KEY"];
 
   afterEach(() => {
     if (originalToken === undefined) delete process.env["DESKTOPPILOT_SERVER_TOKEN"];
@@ -210,6 +211,9 @@ describe("secure AI task-plan endpoint", () => {
 
     if (originalGatewayKey === undefined) delete process.env["LOVABLE_API_KEY"];
     else process.env["LOVABLE_API_KEY"] = originalGatewayKey;
+
+    if (originalGeminiKey === undefined) delete process.env["GEMINI_API_KEY"];
+    else process.env["GEMINI_API_KEY"] = originalGeminiKey;
 
     vi.unstubAllGlobals();
   });
