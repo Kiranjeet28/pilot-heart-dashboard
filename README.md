@@ -204,3 +204,17 @@ Tests use a fake desktop and don't move your mouse.
 ## Built with
 
 TanStack Start · TypeScript · React · Tailwind CSS · Python (worker)
+
+## Module 4: See and adapt
+
+In REAL LOCAL mode, after each step that changes the screen (click, typing, keys, focusing a window, paste) the dashboard takes a fresh screenshot and asks Gemini whether the step worked:
+
+- **Looks right**: the task continues.
+- **Could not tell**: recorded as unverified, and the task continues. It never counts as a pass.
+- **Unexpected screen**: Gemini plans the remaining steps again from the current screen. The new steps run without asking you again, **only if** they use the same target, action types, keys, and typed text you approved. If not, the task stops with "The plan needed actions you didn't approve. Start the task again to review them."
+
+Limits: at most 3 plan adjustments per task, 20 steps in total, and 15 seconds per check. Stop works at all times.
+
+**Privacy:** while this is on, screenshots of your screen are sent to Google Gemini (through Lovable AI, or with your `GEMINI_API_KEY` when you run locally). They are never saved. Turn it off in **Settings → See and adapt**. Demo mode only shows simulated checks.
+
+**Manual test (on your PC):** pair the helper, set the target to Notepad, and run "Open Notepad and type hello". Approve the plan, then close Notepad right after it opens. The timeline should show "Unexpected screen — adjusting plan", then "Plan adjusted (1/3)", and the task should reopen Notepad and finish. Also press Stop during "Checking the screen…" to confirm it halts.
