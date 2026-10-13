@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import socket
 import sys
 
 from . import NAME, VERSION
@@ -18,6 +19,16 @@ def _logging(log_file: str | None) -> None:
         h.addFilter(RedactingFilter())
         h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     logging.basicConfig(level=logging.INFO, handlers=handlers, force=True)
+
+
+def port_in_use(port: int) -> bool:
+    """True when something already holds 127.0.0.1:<port> — e.g. a worker left running."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        try:
+            probe.bind((BIND_HOST, port))
+        except OSError:
+            return True
+    return False
 
 
 def cmd_setup(force: bool) -> int:
