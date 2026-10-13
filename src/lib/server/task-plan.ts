@@ -184,7 +184,11 @@ export async function handleTaskPlanRequest(request: Request): Promise<Response>
     request.headers.get("origin") ?? request.headers.get("referer") ?? "headerless-client";
   if (isRateLimited(bucketKey)) {
     return Response.json(
-      { ok: false, code: "rate_limited", message: "Too many planning requests. Try again shortly." },
+      {
+        ok: false,
+        code: "rate_limited",
+        message: "Too many planning requests. Try again shortly.",
+      },
       { status: 429 },
     );
   }

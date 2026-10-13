@@ -303,10 +303,7 @@ describe("secure Gemini task-plan endpoint", () => {
 
   it("rejects invalid payloads with a 400", async () => {
     process.env["GEMINI_API_KEY"] = "test-gemini-key";
-    const response = await postPlan(
-      { userRequest: "" },
-      { origin: "http://localhost:3000" },
-    );
+    const response = await postPlan({ userRequest: "" }, { origin: "http://localhost:3000" });
     expect(response.status).toBe(400);
     const json = await response.json();
     expect(json.code).toBe("invalid_request");
