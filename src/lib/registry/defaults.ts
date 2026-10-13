@@ -2,15 +2,15 @@
 import type { AccountProfile, AppSettings, DesktopTarget, Provider } from "@/lib/types";
 
 export const DEFAULT_PROVIDERS: Provider[] = [
-  { id: "openai", displayName: "OpenAI", type: "openai", connectionMethod: "api_key", model: "gpt-5", enabled: true, connectionStatus: "configured_unverified" },
-  { id: "gemini", displayName: "Google Gemini", type: "gemini", connectionMethod: "api_key", model: "gemini-2.5-pro", enabled: true, connectionStatus: "configured_unverified" },
+  { id: "gemini", displayName: "Google Gemini", type: "gemini", connectionMethod: "api_key", model: "gemini-2.5-flash", enabled: true, connectionStatus: "configured_unverified" },
+  { id: "openai", displayName: "OpenAI", type: "openai", connectionMethod: "api_key", model: "gpt-5", enabled: false, connectionStatus: "not_configured" },
   { id: "anthropic", displayName: "Anthropic", type: "anthropic", connectionMethod: "api_key", model: "claude-sonnet-4", enabled: false, connectionStatus: "not_configured" },
   { id: "custom-local", displayName: "Custom (local endpoint)", type: "custom", connectionMethod: "local_endpoint", model: "", enabled: false, connectionStatus: "not_configured" },
 ];
 
 export const DEFAULT_PROFILES: AccountProfile[] = [
-  { id: "personal", name: "Personal", providerId: "openai", authMethod: "api_key_ref", credentialRef: "OPENAI_PERSONAL_KEY", notes: "" },
-  { id: "work", name: "Work", providerId: "gemini", authMethod: "api_key_ref", credentialRef: "GEMINI_WORK_KEY", notes: "" },
+  { id: "personal", name: "Personal", providerId: "gemini", authMethod: "api_key_ref", credentialRef: "GEMINI_API_KEY", notes: "" },
+  { id: "work", name: "Work", providerId: "gemini", authMethod: "api_key_ref", credentialRef: "GEMINI_API_KEY", notes: "" },
 ];
 
 export const DEFAULT_TARGETS: DesktopTarget[] = [

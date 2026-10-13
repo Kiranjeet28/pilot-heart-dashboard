@@ -88,7 +88,7 @@ describe("strict (real worker) validation", () => {
 });
 
 describe("readiness in REAL LOCAL mode", () => {
-  const base = { providerId: "openai", profileId: "personal", targetId: "vscode", providers: DEFAULT_PROVIDERS, profiles: DEFAULT_PROFILES, targets: DEFAULT_TARGETS, tasks: [], emergencyStop: false, worker: "connected" as const };
+  const base = { providerId: "gemini", profileId: "personal", targetId: "vscode", providers: DEFAULT_PROVIDERS, profiles: DEFAULT_PROFILES, targets: DEFAULT_TARGETS, tasks: [], emergencyStop: false, worker: "connected" as const };
   it("blocks tasks when the real worker is not connected", () => {
     expect(checkReadiness({ ...base, realWorker: { connected: false, message: "Not paired" } }).some((i) => i.includes("Not paired"))).toBe(true);
   });

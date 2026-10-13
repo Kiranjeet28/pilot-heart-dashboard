@@ -34,7 +34,7 @@ export type AIProviderResult = ProviderResult | ProviderFailure;
 
 export interface ProviderAdapter {
   readonly name: string;
-  readonly type: "mock" | "openai" | "custom";
+  readonly type: "mock" | "gemini" | "custom";
   getNextStep(request: AIRequest): Promise<AIProviderResult>;
 }
 
@@ -58,18 +58,6 @@ const responseSchema = z.object({
   requiresApproval: z.boolean().optional(),
 });
 
-export function resolveProviderCredential(name?: string, profile?: AccountProfile): string | undefined {
-  const envNames = [name, profile?.credentialRef, "OPENAI_API_KEY", "VITE_OPENAI_API_KEY"]
-    .filter((value): value is string => Boolean(value && value.trim()));
-  for (const candidate of envNames) {
-    const fromNode = typeof process !== "undefined" ? process.env[candidate] : undefined;
-    const fromMeta = typeof import.meta !== "undefined" ? import.meta.env?.[candidate] ?? import.meta.env?.[`VITE_${candidate}`] : undefined;
-    const value = fromNode ?? fromMeta;
-    if (value && value.trim()) return value.trim();
-  }
-  return undefined;
-}
-
 export function normalizeProviderResponse(data: unknown): ProviderResult {
   const parsed = typeof data === "string" ? JSON.parse(data) : data;
   const payload = responseSchema.safeParse(parsed);
@@ -87,8 +75,12 @@ export function normalizeProviderResponse(data: unknown): ProviderResult {
   };
 }
 
+function makeProviderFailure(code: ProviderErrorCode, message: string, retryable: boolean): ProviderFailure {
+  return { ok: false, code, message, retryable };
+}
+
 function extractResponseMessage(data: unknown): string {
-  if (!data || typeof data !== "object") return "Invalid provider response";
+  if (!data || typeof data !== "object") return "Unexpected provider response";
   const record = data as Record<string, unknown>;
   if (typeof record.error === "string") return record.error;
   if (record.error && typeof record.error === "object") {
@@ -99,82 +91,52 @@ function extractResponseMessage(data: unknown): string {
   return "Unexpected provider response";
 }
 
-async function requestJson(url: string, init: RequestInit): Promise<unknown> {
-  const response = await fetch(url, init);
-  let data: unknown = undefined;
-  try {
-    data = await response.json();
-  } catch {
-    data = await response.text();
-  }
-  if (!response.ok) {
-    const message = extractResponseMessage(data);
-    const status = response.status;
-    if (status === 401) throw Object.assign(new Error(message || "Authentication with the provider failed"), { code: "auth_failed" });
-    if (status === 429) throw Object.assign(new Error(message || "Rate limited by the provider"), { code: "rate_limit" });
-    if (status >= 500) throw Object.assign(new Error(message || "Provider server error"), { code: "network_error" });
-    throw Object.assign(new Error(message || "Provider request failed"), { code: "unknown" });
-  }
-  return data;
-}
-
-export class OpenAIProvider implements ProviderAdapter {
-  readonly name = "OpenAI";
-  readonly type = "openai" as const;
-
-  constructor(private readonly apiKey?: string, private readonly timeoutMs = 20000) {}
+export class GeminiProvider implements ProviderAdapter {
+  readonly name = "Gemini";
+  readonly type = "gemini" as const;
 
   async getNextStep(request: AIRequest): Promise<AIProviderResult> {
-    const key = request.profile?.credentialRef ? resolveProviderCredential(request.profile.credentialRef) ?? this.apiKey : this.apiKey ?? resolveProviderCredential("OPENAI_API_KEY", request.profile);
-    if (!key) {
-      return { ok: false, code: "missing_credentials", message: "OpenAI API key is not configured. Set OPENAI_API_KEY or the matching credential reference.", retryable: false };
-    }
-    const model = request.modelOverride || request.provider.model || "gpt-4o-mini";
-    const body = {
-      model,
-      temperature: 0.2,
-      response_format: { type: "json_object" },
-      messages: [
-        {
-          role: "system",
-          content: "Return JSON only with plan, summary, and an optional nextAction matching the desktop action schema. Never invent unapproved shell or file operations.",
-        },
-        {
-          role: "user",
-          content: `Task: ${request.userRequest}\nTarget: ${request.targetId ?? "desktop"}\nContext: ${request.context?.join(" | ") ?? "none"}`,
-        },
-      ],
-    };
-
     try {
-      const data = await requestJson("https://api.openai.com/v1/chat/completions", {
+      const response = await fetch("/api/tasks/plan", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${key}`,
-        },
-        signal: AbortSignal.timeout(this.timeoutMs),
-        body: JSON.stringify(body),
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          taskId: request.taskId,
+          userRequest: request.userRequest,
+          targetId: request.targetId ?? "desktop",
+          providerId: request.provider.id,
+          profileId: request.profile?.id ?? "",
+          context: request.context ?? [],
+          modelOverride: request.modelOverride ?? request.provider.model,
+          timeoutMs: request.timeoutMs ?? 30000,
+        }),
       });
 
-      const choices = (data as { choices?: Array<{ message?: { content?: string } }> })?.choices ?? [];
-      const text = choices[0]?.message?.content;
-      if (!text) {
-        throw Object.assign(new Error("OpenAI returned an empty response"), { code: "invalid_response" });
+      let payload: unknown;
+      try {
+        payload = await response.json();
+      } catch {
+        payload = await response.text();
       }
-      const payload = JSON.parse(text);
-      return normalizeProviderResponse(payload);
+
+      if (!response.ok) {
+        const reason = extractResponseMessage(payload);
+        if (response.status === 401) return makeProviderFailure("auth_failed", reason, false);
+        if (response.status === 429) return makeProviderFailure("rate_limit", reason, true);
+        if (response.status >= 500) return makeProviderFailure("network_error", reason, true);
+        return makeProviderFailure("unknown", reason, false);
+      }
+
+      try {
+        return normalizeProviderResponse(payload);
+      } catch (error) {
+        return makeProviderFailure("invalid_response", error instanceof Error ? error.message : "Malformed Gemini response", false);
+      }
     } catch (error) {
-      const err = error as Error & { code?: ProviderErrorCode };
-      if (err?.code === "auth_failed") return { ok: false, code: "auth_failed", message: err.message, retryable: false };
-      if (err?.code === "rate_limit") return { ok: false, code: "rate_limit", message: err.message, retryable: true };
-      if (err?.code === "network_error") return { ok: false, code: "network_error", message: err.message, retryable: true };
-      if (err?.name === "TimeoutError" || (err?.message || "").toLowerCase().includes("timeout")) return { ok: false, code: "timeout", message: "OpenAI request timed out.", retryable: true };
-      if (err) {
-        const message = err.message || "Invalid response from OpenAI";
-        return { ok: false, code: "invalid_response", message, retryable: false };
-      }
-      return { ok: false, code: "unknown", message: "Unknown provider error", retryable: true };
+      const message = error instanceof Error ? error.message : "Gemini request failed";
+      const lower = message.toLowerCase();
+      if (lower.includes("timeout")) return makeProviderFailure("timeout", message, true);
+      return makeProviderFailure("network_error", message, true);
     }
   }
 }
@@ -205,6 +167,7 @@ export class MockAIProvider implements ProviderAdapter {
 }
 
 export function createAIProvider(provider: Provider, profile?: AccountProfile, overrides?: { apiKey?: string; timeoutMs?: number }): ProviderAdapter {
-  if (provider.type === "openai") return new OpenAIProvider(overrides?.apiKey ?? resolveProviderCredential(profile?.credentialRef, profile) ?? resolveProviderCredential("OPENAI_API_KEY"), overrides?.timeoutMs ?? 20000);
+  if (provider.type === "gemini") return new GeminiProvider();
+  if (provider.type === "openai") return new MockAIProvider();
   return new MockAIProvider();
 }
