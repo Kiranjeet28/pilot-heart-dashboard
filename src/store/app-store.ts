@@ -195,7 +195,9 @@ function schedule(id: string, ms = state.settings.stepDelayMs) {
 }
 
 function fail(id: string, error: string) {
-  if (transition(id, "failed", { error, summary: `Failed: ${error}` })) log(id, "error", error);
+  const sim = currentWorker().mode === "demo";
+  if (transition(id, "failed", { error, summary: `Failed: ${error}` }))
+    log(id, "error", error, sim, !sim);
 }
 
 async function tick(id: string) {
@@ -262,6 +264,18 @@ async function tick(id: string) {
         return fail(id, `${provider.displayName} planning failed: ${planned.message}`);
       const capabilities = !sim && w.getCapabilities ? await w.getCapabilities() : undefined;
       const steps = normalizeProviderPlan(planned, target, capabilities?.actions);
+      if (capabilities?.keys) {
+        const helperKeys = new Set(capabilities.keys.map((k) => k.toLowerCase()));
+        const missing = steps
+          .filter((s) => s.action.kind === "key_press" && s.action.keys)
+          .map((s) => s.action.keys!.toLowerCase())
+          .filter((k) => !helperKeys.has(k));
+        if (missing.length)
+          return fail(
+            id,
+            `The helper on your PC is an older version and does not allow: ${[...new Set(missing)].join(", ")}. In PowerShell: stop the helper (Ctrl+C), run "git pull", then ".\\start-worker.ps1" and pair again.`,
+          );
+      }
       transition(id, "running", { steps, currentStep: 0 });
       log(id, "info", `Plan ready: ${steps.length} ${sim ? "simulated" : "Gemini"} steps`, sim);
       return schedule(id);
