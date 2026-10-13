@@ -20,6 +20,10 @@ export const ALLOWED_KEYS = [
   "ctrl+z",
   "shift+home",
   "shift+end",
+  "windows",
+  "windows+r",
+  "windows+e",
+  "windows+d",
 ] as const;
 
 export const MAX_ACTION_TEXT = 500;

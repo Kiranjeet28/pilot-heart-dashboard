@@ -15,6 +15,7 @@ ALLOWED_KEYS = frozenset(
         "enter", "tab", "escape", "backspace", "delete", "space",
         "up", "down", "left", "right", "home", "end", "pageup", "pagedown",
         "ctrl+a", "ctrl+c", "ctrl+v", "ctrl+z", "shift+home", "shift+end",
+        "windows", "windows+r", "windows+e", "windows+d",
     }
 )
 MAX_TEXT = 500
