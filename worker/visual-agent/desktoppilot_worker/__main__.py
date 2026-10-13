@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import socket
 import sys
 
 from . import NAME, VERSION
@@ -18,6 +19,16 @@ def _logging(log_file: str | None) -> None:
         h.addFilter(RedactingFilter())
         h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     logging.basicConfig(level=logging.INFO, handlers=handlers, force=True)
+
+
+def port_in_use(port: int) -> bool:
+    """True when something already holds 127.0.0.1:<port> — e.g. a worker left running."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        try:
+            probe.bind((BIND_HOST, port))
+        except OSError:
+            return True
+    return False
 
 
 def cmd_setup(force: bool) -> int:
@@ -37,6 +48,13 @@ def cmd_run(config_path: str) -> int:
     except (ConfigError, ValueError) as e:
         print(f"Config error: {e}")
         return 2
+    if port_in_use(cfg.port):
+        print(f"Port {cfg.port} is already in use, so the worker cannot start.")
+        print("Something else is holding it — usually a worker window left open. To free it:")
+        print(f"  Get-NetTCPConnection -LocalPort {cfg.port} -State Listen | Select-Object -ExpandProperty OwningProcess")
+        print("  Stop-Process -Id <the number above>")
+        print("Or set a different \"port\" in config.json and use the same number in Settings -> Local worker connection.")
+        return 4
     key = SecretStore().get()
     if not key:
         print("No signing key found. Run: python -m desktoppilot_worker setup")

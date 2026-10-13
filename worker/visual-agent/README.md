@@ -123,6 +123,7 @@ are not sent. The worker answers `423 worker_stopped` until you reset the emerge
 | --- | --- |
 | `No signing key found` | Run `... -m desktoppilot_worker setup` |
 | `Config error: ...` | Fix `config.json` (port range, exact origins, no `*`) |
+| `Port 8765 is already in use` | Another worker window (or program) holds it. Close the old window, or free it: `Get-NetTCPConnection -LocalPort 8765 -State Listen \| Select-Object -ExpandProperty OwningProcess` then `Stop-Process -Id <that number>`. Or set a different `port` in `config.json` and match it in Settings |
 | `Could not initialise desktop control` | Run from an unlocked, interactive desktop session, not over SSH or as a service |
 | Dashboard: "Could not reach the worker" | Is the worker running? Does the port match? Is the exact page origin in `allowed_origins` (restart after editing)? Did you allow local network access? On Safari, use local development |
 | `origin_not_allowed` in the worker log | Add the origin shown in the log to `allowed_origins` and restart |
