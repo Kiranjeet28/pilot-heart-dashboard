@@ -45,6 +45,9 @@ foreach ($c in $conns) {
     }
 }
 
+# Run from the worker folder so Python can find the helper module.
+Set-Location $dir
+
 # 4. One-time signing key (safe to re-run; does nothing if it already exists)
 & $py -m desktoppilot_worker setup
 
