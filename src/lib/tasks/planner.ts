@@ -108,6 +108,8 @@ export function normalizeProviderPlan(
       !supportedActions.includes(step.action.kind)
     )
       throw new Error(`Plan step ${index + 1} uses an unsupported worker action.`);
+    if (step.verification?.kind === "text_match" && !step.verification.expectedText?.trim())
+      throw new Error(`Plan step ${index + 1} uses text_match verification without expected text.`);
     if (target.interactionMode === "observe_only" && INPUT_ACTIONS.includes(step.action.kind))
       throw new Error(`Target "${target.displayName}" only permits observation.`);
     const validation = validateAction(step.action);

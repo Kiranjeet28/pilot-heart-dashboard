@@ -42,6 +42,8 @@ export interface ActionResult {
   message: string;
   simulated: boolean;
   completedAt: number;
+  /** Text evidence returned by the worker when available (feeds text_match verification). */
+  text?: string;
   data?: {
     clipboardLength?: number;
     typedLength?: number;

@@ -19,7 +19,11 @@ export function verifyTextMatch(
     return { status: "unverified", reason: "No expected text was provided." };
   }
   if (normalizedObserved.length === 0) {
-    return { status: "failed", reason: "Observed text was empty.", evidence: "" };
+    return {
+      status: "unverified",
+      reason: "No observed text was available from the worker to verify against.",
+      evidence: "",
+    };
   }
   const matches = opts?.allowPartial
     ? normalizedObserved.includes(normalizedExpected)

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { GoogleGenAI } from "@google/genai";
-import { normalizeProviderResponse } from "@/lib/ai/provider";
+import { normalizeProviderResponse, type ProviderResult } from "@/lib/ai/provider";
 
 export interface TaskPlanRequestInput {
   taskId?: string | undefined;
@@ -29,13 +29,19 @@ function getServerToken(): string | null {
   return token && token.length > 0 ? token : null;
 }
 
+/**
+ * Same-origin evidence policy: a browser request must positively prove it
+ * originates from this app. Missing Origin/Referer and unknown fetch metadata
+ * are treated as untrusted — never as proof of trust.
+ */
 function isSameOriginRequest(request: Request): boolean {
   const url = new URL(request.url);
+  const fetchSite = request.headers.get("sec-fetch-site");
+  if (fetchSite === "cross-site" || fetchSite === "same-site") return false;
+
   const originHeader = request.headers.get("origin");
   const refererHeader = request.headers.get("referer");
-  const fetchSite = request.headers.get("sec-fetch-site");
-
-  if (fetchSite === "cross-site") return false;
+  if (!originHeader && !refererHeader) return false;
 
   for (const candidate of [originHeader, refererHeader]) {
     if (!candidate) continue;
@@ -51,20 +57,39 @@ function isSameOriginRequest(request: Request): boolean {
 }
 
 function isAuthorizedRequest(request: Request): boolean {
-  const serverToken = getServerToken();
   const authHeader =
     request.headers.get("authorization") ?? request.headers.get("x-desktoppilot-session");
 
   if (authHeader) {
     if (!authHeader.startsWith("Bearer ")) return false;
     const provided = authHeader.slice(7).trim();
-    if (serverToken && provided === serverToken) return true;
-    if (!serverToken && isSameOriginRequest(request)) return true;
-    return false;
+    const serverToken = getServerToken();
+    return Boolean(serverToken) && provided.length > 0 && provided === serverToken;
   }
 
-  if (!serverToken) return isSameOriginRequest(request);
   return isSameOriginRequest(request);
+}
+
+const RATE_LIMIT_MAX = 30;
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const MAX_BODY_BYTES = 64 * 1024;
+const rateBuckets = new Map<string, number[]>();
+
+/** Sliding-window rate limiter, keyed by request origin (or a shared bucket when absent). */
+export function isRateLimited(
+  key: string,
+  limit = RATE_LIMIT_MAX,
+  windowMs = RATE_LIMIT_WINDOW_MS,
+  now = Date.now(),
+): boolean {
+  const bucket = (rateBuckets.get(key) ?? []).filter((t) => now - t < windowMs);
+  if (bucket.length >= limit) {
+    rateBuckets.set(key, bucket);
+    return true;
+  }
+  bucket.push(now);
+  rateBuckets.set(key, bucket);
+  return false;
 }
 
 function extractJsonObject(raw: string): string {
@@ -87,6 +112,7 @@ function cleanedFallback(raw: string): string {
 
 function buildPrompt(input: TaskPlanRequestInput): string {
   const safeRequest = input.userRequest.trim();
+  const targetLine = `Selected desktop target ID: ${input.targetId ?? "desktop"}. Every action's targetId MUST be exactly this value.`;
   const contextText = input.context?.length
     ? `\nContext:\n${input.context.map((item) => `- ${item}`).join("\n")}`
     : "";
@@ -95,16 +121,18 @@ function buildPrompt(input: TaskPlanRequestInput): string {
     "{",
     '  "plan": ["step 1 description", "step 2 description"],',
     '  "summary": "short summary",',
-    '  "steps": [{ "action": { "kind": "read_screen", "targetId": "desktop", "description": "inspect the desktop" }, "requiresApproval": false, "verification": { "kind": "screen_capture" } }]',
+    '  "steps": [{ "action": { "kind": "read_screen", "targetId": "<selected target id>", "description": "inspect the desktop" }, "requiresApproval": false, "verification": { "kind": "screen_capture" } }]',
     "}",
     "Choose only safe desktop actions from this allowlist: focus_window, read_screen, click, type_text, key_press, wait, copy_selection, paste.",
+    targetLine,
     `Task: ${safeRequest}${contextText}`,
+    "Verification kinds: worker_ok and screen_capture are always allowed. Use text_match only when you also provide expectedText for text you know will appear on screen. Use clipboard only for copy_selection steps. Never invent verification evidence.",
     "Keep the plan bounded to at most 12 steps and realistic for DesktopPilot. Include verification for every step and avoid unsafe or destructive actions.",
     "The response must be parseable by JSON.parse without commentary or markdown fences.",
   ].join("\n");
 }
 
-export async function generateGeminiTaskPlan(input: TaskPlanRequestInput): Promise<unknown> {
+export async function generateGeminiTaskPlan(input: TaskPlanRequestInput): Promise<ProviderResult> {
   const apiKey = process.env["GEMINI_API_KEY"] ?? process.env["GOOGLE_API_KEY"];
   if (!apiKey) {
     throw Object.assign(new Error("Missing GEMINI_API_KEY server environment variable."), {
@@ -152,9 +180,26 @@ export async function handleTaskPlanRequest(request: Request): Promise<Response>
     );
   }
 
+  const bucketKey =
+    request.headers.get("origin") ?? request.headers.get("referer") ?? "headerless-client";
+  if (isRateLimited(bucketKey)) {
+    return Response.json(
+      { ok: false, code: "rate_limited", message: "Too many planning requests. Try again shortly." },
+      { status: 429 },
+    );
+  }
+
+  const raw = await request.text();
+  if (raw.length > MAX_BODY_BYTES) {
+    return Response.json(
+      { ok: false, code: "payload_too_large", message: "Request body exceeds the 64 KB limit." },
+      { status: 413 },
+    );
+  }
+
   let body: unknown;
   try {
-    body = await request.json();
+    body = JSON.parse(raw);
   } catch {
     return Response.json(
       { ok: false, code: "invalid_request", message: "Request body must be valid JSON." },
@@ -176,6 +221,19 @@ export async function handleTaskPlanRequest(request: Request): Promise<Response>
 
   try {
     const result = await generateGeminiTaskPlan(parsed.data);
+    if (
+      parsed.data.targetId &&
+      result.steps.some((step) => step.action.targetId !== parsed.data.targetId)
+    ) {
+      return Response.json(
+        {
+          ok: false,
+          code: "target_mismatch",
+          message: "One or more generated steps target a desktop other than the selected target.",
+        },
+        { status: 400 },
+      );
+    }
     return Response.json(result, { status: 200 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Gemini request failed";
