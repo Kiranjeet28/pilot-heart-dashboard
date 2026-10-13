@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { GoogleGenAI } from "@google/genai";
 import { normalizeProviderResponse, type ProviderResult } from "@/lib/ai/provider";
 
 export interface TaskPlanRequestInput {
@@ -92,6 +91,165 @@ export function isRateLimited(
   return false;
 }
 
+// ---------- Lovable AI Gateway (server-side planning transport) ----------
+
+const GATEWAY_CHAT_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
+const LOVABLE_AIG_RUN_ID_HEADER = "X-Lovable-AIG-Run-ID";
+const MAX_PLAN_TOKENS = 800;
+
+/** Strict JSON schema the model must emit; verified again by responseSchema on the way out. */
+const PLAN_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["plan", "summary", "steps"],
+  properties: {
+    plan: { type: "array", maxItems: 12, items: { type: "string" } },
+    summary: { type: "string" },
+    steps: {
+      type: "array",
+      maxItems: 12,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["action", "requiresApproval"],
+        properties: {
+          action: {
+            type: "object",
+            additionalProperties: false,
+            required: ["kind", "targetId", "description"],
+            properties: {
+              kind: {
+                type: "string",
+                enum: [
+                  "focus_window",
+                  "read_screen",
+                  "click",
+                  "type_text",
+                  "key_press",
+                  "wait",
+                  "copy_selection",
+                  "paste",
+                ],
+              },
+              targetId: { type: "string" },
+              description: { type: "string" },
+              text: { type: "string" },
+              x: { type: "integer" },
+              y: { type: "integer" },
+              keys: { type: "string" },
+              durationMs: { type: "integer" },
+              observationId: { type: "string" },
+            },
+          },
+          requiresApproval: { type: "boolean" },
+          verification: {
+            type: "object",
+            additionalProperties: false,
+            required: ["kind"],
+            properties: {
+              kind: {
+                type: "string",
+                enum: ["worker_ok", "screen_capture", "text_match", "clipboard"],
+              },
+              expectedText: { type: "string" },
+              allowPartial: { type: "boolean" },
+            },
+          },
+        },
+      },
+    },
+  },
+} as const;
+
+function resolveGatewayModel(model?: string): string {
+  const requested = (model ?? process.env["GEMINI_MODEL"] ?? "gemini-2.5-flash").trim();
+  if (requested.includes("/")) return requested;
+  if (requested.startsWith("gemini")) return `google/${requested}`;
+  return requested;
+}
+
+interface GatewayRequestError extends Error {
+  code: string;
+  status?: number;
+}
+
+function gatewayError(code: string, message: string, status?: number): GatewayRequestError {
+  return Object.assign(new Error(message), { code, ...(status !== undefined ? { status } : {}) });
+}
+
+function gatewayCodeFor(status: number): string {
+  if (status === 401) return "auth_failed";
+  if (status === 402) return "insufficient_credits";
+  if (status === 403) return "forbidden";
+  if (status === 404) return "unavailable_model";
+  if (status === 429) return "rate_limit";
+  if (status >= 500) return "network_error";
+  return "provider_error";
+}
+
+async function extractGatewayErrorMessage(res: Response): Promise<string> {
+  try {
+    const data = (await res.json()) as { error?: unknown; message?: string };
+    if (typeof data.message === "string" && data.message) return data.message;
+    if (data.error && typeof data.error === "object") {
+      const message = (data.error as { message?: unknown }).message;
+      if (typeof message === "string" && message) return message;
+    }
+  } catch {
+    /* fall through to a generic message */
+  }
+  return `AI gateway error (HTTP ${res.status})`;
+}
+
+/** Run-ID wrapper: reuse gateway-issued run ids on follow-ups; never mint one. */
+function createRunIdFetch() {
+  let runId: string | undefined;
+  return {
+    getRunId: () => runId,
+    fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      if (runId && !headers.has(LOVABLE_AIG_RUN_ID_HEADER))
+        headers.set(LOVABLE_AIG_RUN_ID_HEADER, runId);
+      const response = await fetch(input, { ...init, headers });
+      runId ??= response.headers.get(LOVABLE_AIG_RUN_ID_HEADER)?.trim() || undefined;
+      return response;
+    },
+  };
+}
+
+/** Accumulate the streamed chat-completions deltas into the full text content. */
+async function consumeSsePlan(response: Response): Promise<string> {
+  const body = response.body;
+  if (!body) return "";
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let content = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let separator: number;
+    while ((separator = buffer.indexOf("\n\n")) !== -1) {
+      const event = buffer.slice(0, separator);
+      buffer = buffer.slice(separator + 2);
+      for (const line of event.split("\n")) {
+        if (!line.startsWith("data:")) continue;
+        const data = line.slice(5).trim();
+        if (!data || data === "[DONE]") continue;
+        try {
+          const chunk = JSON.parse(data) as { choices?: Array<{ delta?: { content?: string } }> };
+          const delta = chunk.choices?.[0]?.delta?.content;
+          if (typeof delta === "string") content += delta;
+        } catch {
+          /* ignore malformed frames */
+        }
+      }
+    }
+  }
+  return content;
+}
+
 function extractJsonObject(raw: string): string {
   const trimmed = raw.trim();
   if (!trimmed) return "{}";
@@ -133,36 +291,89 @@ function buildPrompt(input: TaskPlanRequestInput): string {
 }
 
 export async function generateGeminiTaskPlan(input: TaskPlanRequestInput): Promise<ProviderResult> {
-  const apiKey = process.env["GEMINI_API_KEY"] ?? process.env["GOOGLE_API_KEY"];
+  const apiKey = process.env["LOVABLE_API_KEY"]?.trim();
   if (!apiKey) {
-    throw Object.assign(new Error("Missing GEMINI_API_KEY server environment variable."), {
-      code: "missing_credentials",
-    });
+    throw gatewayError(
+      "missing_credentials",
+      "The AI gateway key (LOVABLE_API_KEY) is not configured for this project.",
+    );
   }
-  const model = input.modelOverride ?? process.env["GEMINI_MODEL"] ?? "gemini-2.5-flash";
-  const ai = new GoogleGenAI({ apiKey });
+  const model = resolveGatewayModel(input.modelOverride);
   const timeoutMs = input.timeoutMs ?? 30000;
-  const result = await Promise.race([
-    ai.models.generateContent({
-      model,
-      contents: buildPrompt(input),
-      config: {
-        temperature: 0.2,
-        maxOutputTokens: 800,
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const { fetch: runIdFetch } = createRunIdFetch();
+    const response = await runIdFetch(GATEWAY_CHAT_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${apiKey}`,
+        "Lovable-API-Key": apiKey,
+        "X-Lovable-AIG-SDK": "fetch",
       },
-    }),
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("Gemini request timeout")), timeoutMs),
-    ),
-  ]);
+      body: JSON.stringify({
+        model,
+        stream: true,
+        max_tokens: MAX_PLAN_TOKENS,
+        ...(model.startsWith("google/") ? { temperature: 0.2 } : {}),
+        response_format: {
+          type: "json_schema",
+          json_schema: { name: "task_plan", strict: true, schema: PLAN_JSON_SCHEMA },
+        },
+        messages: [
+          {
+            role: "system",
+            content:
+              "You plan safe desktop automation steps for DesktopPilot. Respond only with JSON matching the requested schema.",
+          },
+          { role: "user", content: buildPrompt(input) },
+        ],
+      }),
+      signal: controller.signal,
+    });
 
-  const rawText =
-    typeof (result as { text?: string }).text === "string"
-      ? (result as { text: string }).text
-      : String(result ?? "");
-  const candidateJson = extractJsonObject(rawText);
-  const parsed = JSON.parse(candidateJson);
-  return normalizeProviderResponse(parsed);
+    if (!response.ok) {
+      const message = await extractGatewayErrorMessage(response);
+      throw gatewayError(gatewayCodeFor(response.status), message, response.status);
+    }
+
+    const rawText = await consumeSsePlan(response);
+    if (!rawText.trim()) {
+      throw gatewayError("invalid_response", "The AI gateway returned an empty plan.", 502);
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(extractJsonObject(rawText));
+    } catch {
+      throw gatewayError(
+        "invalid_response",
+        "The AI returned a response that was not valid JSON.",
+        502,
+      );
+    }
+    try {
+      return normalizeProviderResponse(parsed);
+    } catch (error) {
+      throw gatewayError(
+        "invalid_response",
+        error instanceof Error ? error.message : "Malformed AI response",
+        502,
+      );
+    }
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error) throw error;
+    if (controller.signal.aborted) {
+      throw gatewayError("timeout", "AI planning request timed out.", 504);
+    }
+    throw gatewayError(
+      "network_error",
+      error instanceof Error ? error.message : "AI planning request failed",
+      502,
+    );
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function handleTaskPlanRequest(request: Request): Promise<Response> {
@@ -184,11 +395,7 @@ export async function handleTaskPlanRequest(request: Request): Promise<Response>
     request.headers.get("origin") ?? request.headers.get("referer") ?? "headerless-client";
   if (isRateLimited(bucketKey)) {
     return Response.json(
-      {
-        ok: false,
-        code: "rate_limited",
-        message: "Too many planning requests. Try again shortly.",
-      },
+      { ok: false, code: "rate_limited", message: "Too many planning requests. Try again shortly." },
       { status: 429 },
     );
   }
@@ -240,12 +447,20 @@ export async function handleTaskPlanRequest(request: Request): Promise<Response>
     }
     return Response.json(result, { status: 200 });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Gemini request failed";
+    const message = error instanceof Error ? error.message : "AI planning request failed";
     const code =
       error && typeof error === "object" && "code" in error
-        ? String((error as { code?: string }).code)
+        ? String((error as { code?: unknown }).code)
         : "unknown";
-    const status = code === "missing_credentials" ? 500 : 429;
+    const errorStatus = (error as { status?: unknown })?.status;
+    const status =
+      typeof errorStatus === "number"
+        ? errorStatus
+        : code === "missing_credentials"
+          ? 500
+          : code === "rate_limit"
+            ? 429
+            : 502;
     return Response.json({ ok: false, code, message }, { status });
   }
 }

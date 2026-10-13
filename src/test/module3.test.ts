@@ -14,8 +14,8 @@ import { normalizeProviderPlan } from "@/lib/tasks/planner";
 import { verifyActionOutcome, verifyTextMatch } from "@/lib/tasks/verification";
 import { DEFAULT_TARGETS } from "@/lib/registry/defaults";
 
-const mockGenaiState = vi.hoisted(() => ({
-  response: {
+const gatewayState = vi.hoisted(() => ({
+  payload: {
     plan: ["Inspect the desktop state", "Confirm the result"],
     summary: "Safe desktop review",
     nextAction: {
@@ -27,15 +27,25 @@ const mockGenaiState = vi.hoisted(() => ({
   } as Record<string, unknown>,
 }));
 
-vi.mock("@google/genai", () => ({
-  GoogleGenAI: class {
-    models = {
-      generateContent: vi.fn(async () => ({
-        text: JSON.stringify(mockGenaiState.response),
-      })),
-    };
-  },
-}));
+const sseFor = (payload: unknown) =>
+  `data: ${JSON.stringify({ choices: [{ delta: { content: JSON.stringify(payload) } }] })}\n\ndata: [DONE]\n\n`;
+
+function stubGatewayFetch() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes("ai.gateway.lovable.dev")) {
+        return new Response(sseFor(gatewayState.payload), {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
+      return new Response(JSON.stringify({ message: "not found" }), { status: 404 });
+    }),
+  );
+}
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -190,23 +200,22 @@ describe("AI provider adapter", () => {
   });
 });
 
-describe("secure Gemini task-plan endpoint", () => {
+describe("secure AI task-plan endpoint", () => {
   const originalToken = process.env["DESKTOPPILOT_SERVER_TOKEN"];
-  const originalKey = process.env["GEMINI_API_KEY"];
+  const originalGatewayKey = process.env["LOVABLE_API_KEY"];
 
   afterEach(() => {
     if (originalToken === undefined) delete process.env["DESKTOPPILOT_SERVER_TOKEN"];
     else process.env["DESKTOPPILOT_SERVER_TOKEN"] = originalToken;
 
-    if (originalKey === undefined) delete process.env["GEMINI_API_KEY"];
-    else process.env["GEMINI_API_KEY"] = originalKey;
+    if (originalGatewayKey === undefined) delete process.env["LOVABLE_API_KEY"];
+    else process.env["LOVABLE_API_KEY"] = originalGatewayKey;
 
     vi.unstubAllGlobals();
   });
 
   it("rejects cross-site requests and missing configuration", async () => {
     delete process.env["DESKTOPPILOT_SERVER_TOKEN"];
-    delete process.env["GEMINI_API_KEY"];
 
     const response = await handleTaskPlanRequest(
       new Request("https://example.com/api/tasks/plan", {
@@ -225,7 +234,8 @@ describe("secure Gemini task-plan endpoint", () => {
 
   it("allows same-origin browser requests without embedding secrets", async () => {
     delete process.env["DESKTOPPILOT_SERVER_TOKEN"];
-    process.env["GEMINI_API_KEY"] = "test-gemini-key";
+    process.env["LOVABLE_API_KEY"] = "test-gateway-key";
+    stubGatewayFetch();
 
     const response = await handleTaskPlanRequest(
       new Request("http://localhost:3000/api/tasks/plan", {
@@ -246,7 +256,8 @@ describe("secure Gemini task-plan endpoint", () => {
 
   it("accepts a configured backend token for internal clients", async () => {
     process.env["DESKTOPPILOT_SERVER_TOKEN"] = "server-token-123";
-    process.env["GEMINI_API_KEY"] = "test-gemini-key";
+    process.env["LOVABLE_API_KEY"] = "test-gateway-key";
+    stubGatewayFetch();
 
     const response = await handleTaskPlanRequest(
       new Request("http://localhost:3000/api/tasks/plan", {
@@ -261,6 +272,17 @@ describe("secure Gemini task-plan endpoint", () => {
     );
 
     expect(response.status).toBe(200);
+  });
+
+  it("answers 500 with missing_credentials when the gateway key is absent", async () => {
+    delete process.env["LOVABLE_API_KEY"];
+    const response = await postPlan(
+      { userRequest: "Open the README" },
+      { origin: "http://localhost:3000" },
+    );
+    expect(response.status).toBe(500);
+    const json = await response.json();
+    expect(json.code).toBe("missing_credentials");
   });
 
   it("does not expose browser secrets in frontend source", () => {
@@ -302,7 +324,6 @@ describe("secure Gemini task-plan endpoint", () => {
   });
 
   it("rejects invalid payloads with a 400", async () => {
-    process.env["GEMINI_API_KEY"] = "test-gemini-key";
     const response = await postPlan({ userRequest: "" }, { origin: "http://localhost:3000" });
     expect(response.status).toBe(400);
     const json = await response.json();
@@ -310,7 +331,6 @@ describe("secure Gemini task-plan endpoint", () => {
   });
 
   it("rejects oversized request bodies with a 413", async () => {
-    process.env["GEMINI_API_KEY"] = "test-gemini-key";
     const response = await postPlan(
       { userRequest: "y".repeat(70_000) },
       { origin: "http://localhost:3000" },
@@ -319,9 +339,10 @@ describe("secure Gemini task-plan endpoint", () => {
   });
 
   it("rejects generated steps that target an unselected desktop", async () => {
-    process.env["GEMINI_API_KEY"] = "test-gemini-key";
-    const original = mockGenaiState.response;
-    mockGenaiState.response = {
+    process.env["LOVABLE_API_KEY"] = "test-gateway-key";
+    stubGatewayFetch();
+    const original = gatewayState.payload;
+    gatewayState.payload = {
       plan: ["Inspect"],
       summary: "Inspect",
       steps: [
@@ -341,14 +362,15 @@ describe("secure Gemini task-plan endpoint", () => {
       const json = await response.json();
       expect(json.code).toBe("target_mismatch");
     } finally {
-      mockGenaiState.response = original;
+      gatewayState.payload = original;
     }
   });
 
   it("returns 200 with matching target steps for a valid same-origin request", async () => {
-    process.env["GEMINI_API_KEY"] = "test-gemini-key";
-    const original = mockGenaiState.response;
-    mockGenaiState.response = {
+    process.env["LOVABLE_API_KEY"] = "test-gateway-key";
+    stubGatewayFetch();
+    const original = gatewayState.payload;
+    gatewayState.payload = {
       plan: ["Inspect the target"],
       summary: "Inspect the target",
       steps: [
@@ -369,7 +391,7 @@ describe("secure Gemini task-plan endpoint", () => {
       expect(json.ok).toBe(true);
       expect(json.steps[0].action.targetId).toBe("vscode");
     } finally {
-      mockGenaiState.response = original;
+      gatewayState.payload = original;
     }
   });
 
