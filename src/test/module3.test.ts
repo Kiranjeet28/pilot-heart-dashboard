@@ -269,4 +269,117 @@ describe("secure Gemini task-plan endpoint", () => {
       /VITE_GEMINI_API_KEY|desktoppilot_server_token|import\.meta\.env|sessionStorage/i,
     );
   });
+
+  const postPlan = (
+    body: unknown,
+    headers: Record<string, string> = {},
+    url = "http://localhost:3000/api/tasks/plan",
+  ) =>
+    handleTaskPlanRequest(
+      new Request(url, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...headers },
+        body: typeof body === "string" ? body : JSON.stringify(body),
+      }),
+    );
+
+  it("rejects requests with no origin evidence (missing headers are not trust)", async () => {
+    delete process.env["DESKTOPPILOT_SERVER_TOKEN"];
+    const response = await postPlan(
+      { userRequest: "Open the README" },
+      { "sec-fetch-site": "same-origin" }, // fetch metadata alone proves nothing
+    );
+    expect(response.status).toBe(401);
+  });
+
+  it("rejects requests from an untrusted origin", async () => {
+    delete process.env["DESKTOPPILOT_SERVER_TOKEN"];
+    const response = await postPlan(
+      { userRequest: "Open the README" },
+      { origin: "https://untrusted.example" },
+    );
+    expect(response.status).toBe(401);
+  });
+
+  it("rejects invalid payloads with a 400", async () => {
+    process.env["GEMINI_API_KEY"] = "test-gemini-key";
+    const response = await postPlan(
+      { userRequest: "x" },
+      { origin: "http://localhost:3000" },
+    );
+    expect(response.status).toBe(400);
+    const json = await response.json();
+    expect(json.code).toBe("invalid_request");
+  });
+
+  it("rejects oversized request bodies with a 413", async () => {
+    process.env["GEMINI_API_KEY"] = "test-gemini-key";
+    const response = await postPlan(
+      { userRequest: "y".repeat(70_000) },
+      { origin: "http://localhost:3000" },
+    );
+    expect(response.status).toBe(413);
+  });
+
+  it("rejects generated steps that target an unselected desktop", async () => {
+    process.env["GEMINI_API_KEY"] = "test-gemini-key";
+    const original = mockGenaiState.response;
+    mockGenaiState.response = {
+      plan: ["Inspect"],
+      summary: "Inspect",
+      steps: [
+        {
+          action: { kind: "read_screen", targetId: "wrong-target", description: "Inspect" },
+          requiresApproval: false,
+          verification: { kind: "screen_capture" },
+        },
+      ],
+    };
+    try {
+      const response = await postPlan(
+        { userRequest: "Open the README", targetId: "vscode" },
+        { origin: "http://localhost:3000" },
+      );
+      expect(response.status).toBe(400);
+      const json = await response.json();
+      expect(json.code).toBe("target_mismatch");
+    } finally {
+      mockGenaiState.response = original;
+    }
+  });
+
+  it("returns 200 with matching target steps for a valid same-origin request", async () => {
+    process.env["GEMINI_API_KEY"] = "test-gemini-key";
+    const original = mockGenaiState.response;
+    mockGenaiState.response = {
+      plan: ["Inspect the target"],
+      summary: "Inspect the target",
+      steps: [
+        {
+          action: { kind: "read_screen", targetId: "vscode", description: "Inspect the target" },
+          requiresApproval: false,
+          verification: { kind: "screen_capture" },
+        },
+      ],
+    };
+    try {
+      const response = await postPlan(
+        { userRequest: "Open the README", targetId: "vscode" },
+        { origin: "http://localhost:3000" },
+      );
+      expect(response.status).toBe(200);
+      const json = await response.json();
+      expect(json.ok).toBe(true);
+      expect(json.steps[0].action.targetId).toBe("vscode");
+    } finally {
+      mockGenaiState.response = original;
+    }
+  });
+
+  it("rate limits repeated planning requests from one origin", () => {
+    const key = "rate-test-origin";
+    for (let i = 0; i < 30; i++) expect(isRateLimited(key, 30, 60_000)).toBe(false);
+    expect(isRateLimited(key, 30, 60_000)).toBe(true);
+    expect(isRateLimited("rate-test-origin-2", 30, 60_000, Date.now() + 61_000)).toBe(false);
+  });
 });
