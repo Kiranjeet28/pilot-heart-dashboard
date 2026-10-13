@@ -16,6 +16,7 @@ import { Route as ProvidersRouteImport } from './routes/providers'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as TargetsRouteImport } from './routes/targets'
 import { Route as TasksRouteImport } from './routes/tasks'
+import { Route as ApiTasksCheckRouteImport } from './routes/api/tasks/check'
 import { Route as ApiTasksPlanRouteImport } from './routes/api/tasks/plan'
 
 const IndexRoute = IndexRouteImport.update({
@@ -53,6 +54,11 @@ const TasksRoute = TasksRouteImport.update({
   path: '/tasks',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiTasksCheckRoute = ApiTasksCheckRouteImport.update({
+  id: '/api/tasks/check',
+  path: '/api/tasks/check',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiTasksPlanRoute = ApiTasksPlanRouteImport.update({
   id: '/api/tasks/plan',
   path: '/api/tasks/plan',
@@ -67,6 +73,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof SettingsRoute
   '/targets': typeof TargetsRoute
   '/tasks': typeof TasksRoute
+  '/api/tasks/check': typeof ApiTasksCheckRoute
   '/api/tasks/plan': typeof ApiTasksPlanRoute
 }
 export interface FileRoutesByTo {
@@ -77,6 +84,7 @@ export interface FileRoutesByTo {
   '/settings': typeof SettingsRoute
   '/targets': typeof TargetsRoute
   '/tasks': typeof TasksRoute
+  '/api/tasks/check': typeof ApiTasksCheckRoute
   '/api/tasks/plan': typeof ApiTasksPlanRoute
 }
 export interface FileRoutesById {
@@ -88,6 +96,7 @@ export interface FileRoutesById {
   '/settings': typeof SettingsRoute
   '/targets': typeof TargetsRoute
   '/tasks': typeof TasksRoute
+  '/api/tasks/check': typeof ApiTasksCheckRoute
   '/api/tasks/plan': typeof ApiTasksPlanRoute
 }
 export interface FileRouteTypes {
@@ -100,6 +109,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/targets'
     | '/tasks'
+    | '/api/tasks/check'
     | '/api/tasks/plan'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -110,6 +120,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/targets'
     | '/tasks'
+    | '/api/tasks/check'
     | '/api/tasks/plan'
   id:
     | '__root__'
@@ -120,6 +131,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/targets'
     | '/tasks'
+    | '/api/tasks/check'
     | '/api/tasks/plan'
   fileRoutesById: FileRoutesById
 }
@@ -131,6 +143,7 @@ export interface RootRouteChildren {
   SettingsRoute: typeof SettingsRoute
   TargetsRoute: typeof TargetsRoute
   TasksRoute: typeof TasksRoute
+  ApiTasksCheckRoute: typeof ApiTasksCheckRoute
   ApiTasksPlanRoute: typeof ApiTasksPlanRoute
 }
 
@@ -185,6 +198,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof TasksRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/tasks/check': {
+      id: '/api/tasks/check'
+      path: '/api/tasks/check'
+      fullPath: '/api/tasks/check'
+      preLoaderRoute: typeof ApiTasksCheckRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/tasks/plan': {
       id: '/api/tasks/plan'
       path: '/api/tasks/plan'
@@ -203,6 +223,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsRoute: SettingsRoute,
   TargetsRoute: TargetsRoute,
   TasksRoute: TasksRoute,
+  ApiTasksCheckRoute: ApiTasksCheckRoute,
   ApiTasksPlanRoute: ApiTasksPlanRoute,
 }
 export const routeTree = rootRouteImport
