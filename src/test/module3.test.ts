@@ -24,7 +24,7 @@ const mockGenaiState = vi.hoisted(() => ({
       description: "Inspect the desktop state",
     },
     requiresApproval: false,
-  },
+  } as Record<string, unknown>,
 }));
 
 vi.mock("@google/genai", () => ({
