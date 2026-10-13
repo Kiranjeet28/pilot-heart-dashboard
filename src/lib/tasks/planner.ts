@@ -111,7 +111,8 @@ export function normalizeProviderPlan(
   if (result.steps.length > 12) throw new Error("The provider returned too many task steps.");
 
   return result.steps.map((step, index) => {
-    if (step.action.targetId !== target.id)
+    const action = normalizeKeyAction(step.action);
+    if (action.targetId !== target.id)
       throw new Error(`Plan step ${index + 1} targets an unselected desktop.`);
     if (
       supportedActions &&
