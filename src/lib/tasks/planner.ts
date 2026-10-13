@@ -91,6 +91,17 @@ const INPUT_ACTIONS: ActionKind[] = [
   "paste",
 ];
 
+// Gemini often writes the Windows key as "win" (PyAutoGUI's name); the
+// allowlists use "windows". Normalize before validation so both spellings work.
+function normalizeKeyAction(action: ProviderResult["steps"][number]["action"]) {
+  if (action.kind !== "key_press") return action;
+  const keys = action.keys
+    .split("+")
+    .map((part) => (part.trim().toLowerCase() === "win" ? "windows" : part))
+    .join("+");
+  return { ...action, keys };
+}
+
 export function normalizeProviderPlan(
   result: ProviderResult,
   target: DesktopTarget,
