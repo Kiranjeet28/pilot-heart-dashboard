@@ -1,3 +1,4 @@
+import { toGeminiResponseSchema } from "@/lib/server/task-plan";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -408,7 +409,6 @@ describe("secure AI task-plan endpoint", () => {
   });
 });
 
-import { toGeminiResponseSchema } from "@/lib/server/task-plan";
 describe("Gemini direct schema", () => {
   it("removes additionalProperties at every level", () => {
     const out = toGeminiResponseSchema({
