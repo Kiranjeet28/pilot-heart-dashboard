@@ -457,7 +457,17 @@ export async function generateGeminiTaskPlan(input: TaskPlanRequestInput): Promi
       );
     }
   } catch (error) {
-    if (error && typeof error === "object" && "code" in error) throw error;
+    if (error && typeof error === "object" && "code" in error) {
+      // Local runs sometimes carry a stale/invalid gateway key in .env — fall
+      // back to the user's own Gemini key when the gateway rejects auth.
+      if (
+        (error as { code?: unknown }).code === "auth_failed" &&
+        process.env["GEMINI_API_KEY"]?.trim()
+      ) {
+        return generateDirectGeminiPlan(input);
+      }
+      throw error;
+    }
     if (controller.signal.aborted) {
       throw gatewayError("timeout", "AI planning request timed out.", 504);
     }
