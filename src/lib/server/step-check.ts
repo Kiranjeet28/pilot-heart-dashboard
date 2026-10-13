@@ -98,6 +98,7 @@ async function viaGateway(i: StepCheckInput, key: string, signal: AbortSignal) {
       ],
     }),
   });
+  if (res.status === 429) throw new CheckError("rate_limit", "AI quota reached for screen checks.", 429);
   if (!res.ok) throw new CheckError(res.status === 401 ? "auth_failed" : "provider_error", `AI check failed (HTTP ${res.status})`, 502);
   const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
   return parseModelText(data.choices?.[0]?.message?.content ?? "");
@@ -126,6 +127,7 @@ async function viaDirect(i: StepCheckInput, signal: AbortSignal) {
       },
     }),
   });
+  if (res.status === 429) throw new CheckError("rate_limit", "AI quota reached for screen checks.", 429);
   if (!res.ok) throw new CheckError("provider_error", `AI check failed (HTTP ${res.status})`, 502);
   const data = (await res.json()) as {
     candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;

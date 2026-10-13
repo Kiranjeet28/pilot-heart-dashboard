@@ -29,6 +29,7 @@ import {
   canReplan,
   isWithinApprovedScope,
   mergeRemaining,
+  parseRetryAfterSeconds,
   shouldCheckAfter,
 } from "@/lib/tasks/adapt";
 import { requestStepCheck } from "@/lib/ai/step-check-client";
@@ -215,6 +216,9 @@ function fail(id: string, error: string) {
  * when the screen is off track, replan the remaining steps inside the approved scope.
  * Returns "handled" when it has already moved the task on (replanned or failed).
  */
+/** Tasks whose screen checks were paused after an AI quota error (not persisted). */
+const checksPaused = new Set<string>();
+
 async function checkAndAdapt(
   id: string,
   action: ActionRequest,
@@ -233,6 +237,7 @@ async function checkAndAdapt(
     log(id, "warning", "Could not tell — no real screenshot to check. Recorded as unverified.", false, true);
     return "continue";
   }
+  if (checksPaused.has(id)) return "continue";
   const t = getTask(id)!;
   log(id, "info", "Checking the screen…", false, true);
   const check = await requestStepCheck({
@@ -243,6 +248,16 @@ async function checkAndAdapt(
     imageDataUrl: obs.imageDataUrl,
   });
   if (!stillVerifying()) return "handled";
+  if (check.rateLimited) {
+    checksPaused.add(id);
+    log(
+      id,
+      "warning",
+      "AI quota reached — screen checks are paused for the rest of this task so the plan can keep running. Steps are recorded as unverified.",
+      false,
+      true,
+    );
+  }
   patchTask(id, {
     lastCheck: { verdict: check.verdict, reason: check.reason, simulated: false, checkedAt: Date.now() },
   });
@@ -268,15 +283,26 @@ async function checkAndAdapt(
     fail(id, "Cannot adjust the plan: task settings are missing");
     return "handled";
   }
-  const planned = await createAIProvider(provider, profile).getNextStep({
-    taskId: id,
-    userRequest: cur.description,
-    targetId: cur.targetId,
-    provider,
-    profile,
-    context: buildReplanContext(cur.steps, cur.currentStep, check),
-  });
+  const ask = () =>
+    createAIProvider(provider, profile).getNextStep({
+      taskId: id,
+      userRequest: cur.description,
+      targetId: cur.targetId,
+      provider,
+      profile,
+      context: buildReplanContext(cur.steps, cur.currentStep, check),
+    });
+  let planned = await ask();
   if (!stillVerifying()) return "handled";
+  // Free-tier quota: wait once for the hinted time (max 65 s), then try one more time.
+  if (!planned.ok && planned.code === "rate_limit") {
+    const wait = parseRetryAfterSeconds(planned.message) ?? 60;
+    log(id, "warning", `AI quota reached — waiting ${wait} s, then adjusting the plan once more`, false, true);
+    await new Promise((r) => setTimeout(r, wait * 1000));
+    if (!stillVerifying()) return "handled";
+    planned = await ask();
+    if (!stillVerifying()) return "handled";
+  }
   if (!planned.ok) {
     fail(id, `Could not adjust the plan: ${planned.message}`);
     return "handled";

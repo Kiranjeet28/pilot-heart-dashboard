@@ -168,3 +168,19 @@ describe("browser check client", () => {
     expect((await requestStepCheck(good)).verdict).toBe("unsure");
   });
 });
+
+import { parseRetryAfterSeconds } from "@/lib/tasks/adapt";
+describe("AI quota handling", () => {
+  it("reads Google's retry hint", () => {
+    expect(parseRetryAfterSeconds("Please retry in 58.036322721s.")).toBe(59);
+  });
+  it("caps the wait at 65 seconds", () => {
+    expect(parseRetryAfterSeconds("retry in 300s")).toBe(65);
+  });
+  it("marks a 429 check as rate limited and unsure", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ message: "quota" }, { status: 429 })));
+    const r = await requestStepCheck(good);
+    expect(r.verdict).toBe("unsure");
+    expect(r.rateLimited).toBe(true);
+  });
+});

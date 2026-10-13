@@ -21,6 +21,8 @@ export async function requestStepCheck(req: StepCheckRequest): Promise<StepCheck
       signal: controller.signal,
     });
     const payload = (await res.json().catch(() => null)) as { message?: string } | null;
+    if (res.status === 429)
+      return { verdict: "unsure", reason: "AI quota reached", screenSummary: "", rateLimited: true };
     if (!res.ok)
       return { verdict: "unsure", reason: `Screen check unavailable: ${payload?.message ?? `HTTP ${res.status}`}`, screenSummary: "" };
     return (

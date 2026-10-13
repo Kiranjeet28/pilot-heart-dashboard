@@ -11,6 +11,15 @@ export interface StepCheckResult {
   verdict: CheckVerdict;
   reason: string;
   screenSummary: string;
+  /** Set when the AI quota was hit; the runner pauses checks for the task to save quota. */
+  rateLimited?: boolean;
+}
+
+/** Read "retry in 58.03s" style hints from quota errors; capped so a task never stalls long. */
+export function parseRetryAfterSeconds(message: string, cap = 65): number | null {
+  const m = message.match(/retry in ([\d.]+)\s*s/i);
+  if (!m) return null;
+  return Math.min(cap, Math.ceil(Number(m[1])));
 }
 
 /** What the user approved before start. Replanned steps may never go outside it. */
