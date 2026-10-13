@@ -54,6 +54,25 @@ export function CurrentTask({ task }: { task?: Task | undefined }) {
             {real ? <RealTag /> : <SimulatedTag />} {step.action.description}
           </p>
         ) : null}
+        {task.lastCheck ? (
+          <p
+            className={`text-xs ${
+              task.lastCheck.verdict === "ok"
+                ? "text-success"
+                : task.lastCheck.verdict === "off_track"
+                  ? "text-warning"
+                  : "text-muted-foreground"
+            }`}
+          >
+            {task.lastCheck.verdict === "ok"
+              ? "Looks right"
+              : task.lastCheck.verdict === "off_track"
+                ? "Unexpected screen — adjusting plan"
+                : "Could not tell"}
+            {task.lastCheck.simulated ? " (simulated)" : ""}: {task.lastCheck.reason}
+            {task.replans ? ` · plan adjusted ${task.replans}×` : ""}
+          </p>
+        ) : null}
       </div>
 
       {s === "waiting_for_approval" && step ? (

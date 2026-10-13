@@ -55,7 +55,7 @@ function isSameOriginRequest(request: Request): boolean {
   return true;
 }
 
-function isAuthorizedRequest(request: Request): boolean {
+export function isAuthorizedRequest(request: Request): boolean {
   const authHeader =
     request.headers.get("authorization") ?? request.headers.get("x-desktoppilot-session");
 
