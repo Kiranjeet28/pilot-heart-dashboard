@@ -98,6 +98,42 @@ describe("task manager and verification", () => {
     );
     expect(result.status).toBe("failed");
   });
+
+  it("marks text_match as unverified when the worker supplies no observed text", () => {
+    const result = verifyActionOutcome(
+      { kind: "type_text", targetId: "vscode", text: "hi", description: "Type" },
+      { ok: true, message: "typed" },
+      { kind: "text_match", expectedText: "hello" },
+    );
+    expect(result.status).toBe("unverified");
+    expect(verifyTextMatch("hello", "").status).toBe("unverified");
+  });
+
+  it("rejects text_match verification without expected text in plans", () => {
+    expect(() =>
+      normalizeProviderPlan(
+        {
+          ok: true,
+          plan: ["Type text"],
+          summary: "Type text",
+          steps: [
+            {
+              action: {
+                kind: "type_text",
+                targetId: "vscode",
+                text: "hello",
+                description: "Type hello",
+              },
+              requiresApproval: false,
+              verification: { kind: "text_match" },
+            },
+          ],
+        },
+        DEFAULT_TARGETS[0]!,
+        ["type_text"],
+      ),
+    ).toThrow(/text_match/);
+  });
 });
 
 describe("AI provider adapter", () => {
