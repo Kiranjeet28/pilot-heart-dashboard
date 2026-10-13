@@ -1,3 +1,4 @@
+import { toGeminiResponseSchema } from "@/lib/server/task-plan";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -405,5 +406,16 @@ describe("secure AI task-plan endpoint", () => {
     for (let i = 0; i < 30; i++) expect(isRateLimited(key, 30, 60_000)).toBe(false);
     expect(isRateLimited(key, 30, 60_000)).toBe(true);
     expect(isRateLimited("rate-test-origin-2", 30, 60_000, Date.now() + 61_000)).toBe(false);
+  });
+});
+
+describe("Gemini direct schema", () => {
+  it("removes additionalProperties at every level", () => {
+    const out = toGeminiResponseSchema({
+      type: "object",
+      additionalProperties: false,
+      properties: { a: { type: "object", additionalProperties: false, properties: {} } },
+    });
+    expect(JSON.stringify(out)).not.toContain("additionalProperties");
   });
 });
