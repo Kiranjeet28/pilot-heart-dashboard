@@ -274,8 +274,9 @@ describe("secure AI task-plan endpoint", () => {
     expect(response.status).toBe(200);
   });
 
-  it("answers 500 with missing_credentials when the gateway key is absent", async () => {
+  it("answers 500 with missing_credentials when no AI key is configured", async () => {
     delete process.env["LOVABLE_API_KEY"];
+    delete process.env["GEMINI_API_KEY"];
     const response = await postPlan(
       { userRequest: "Open the README" },
       { origin: "http://localhost:3000" },
