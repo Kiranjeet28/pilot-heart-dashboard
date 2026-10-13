@@ -19,3 +19,8 @@
 - The Python worker in worker/visual-agent binds only to 127.0.0.1, checks Host + Origin allowlist, and requires a signed session token for all action endpoints (except /stop) — the hosted app must never get unrestricted desktop access.
 - Worker action allowlists exist twice (src/lib/worker/key-allowlist.ts and worker/visual-agent/desktoppilot_worker/actions.py) and must change together — the worker re-validates everything.
 - Real screenshots and the worker session token are never persisted (token lives in sessionStorage only) — avoids leaking desktop contents or credentials.
+
+## Module 3 (AI task planning)
+- `/api/tasks/plan` (src/routes/api/tasks/plan.ts) is the single Gemini planning route; it self-authenticates via same-origin evidence or the `DESKTOPPILOT_SERVER_TOKEN` bearer — keep missing origin/referer headers untrusted and the rate limiter and 64 KB body cap in place.
+- Gemini plans are validated twice: server-side (strict schema + selected-target enforcement) and client-side (`normalizeProviderPlan`: allowlist, target match, observe-only policy, `text_match` requires `expectedText`).
+- Verification must use real worker evidence: missing observed text is `unverified` (recorded, no retry, never a silent pass); only `failed` triggers the bounded 2-retry loop.
