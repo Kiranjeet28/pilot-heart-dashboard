@@ -91,6 +91,17 @@ const INPUT_ACTIONS: ActionKind[] = [
   "paste",
 ];
 
+// Gemini often writes the Windows key as "win" (PyAutoGUI's name); the
+// allowlists use "windows". Normalize before validation so both spellings work.
+function normalizeKeyAction(action: ProviderResult["steps"][number]["action"]) {
+  if (action.kind !== "key_press" || !action.keys) return action;
+  const keys = action.keys
+    .split("+")
+    .map((part) => (part.trim().toLowerCase() === "win" ? "windows" : part))
+    .join("+");
+  return { ...action, keys };
+}
+
 export function normalizeProviderPlan(
   result: ProviderResult,
   target: DesktopTarget,
@@ -100,26 +111,27 @@ export function normalizeProviderPlan(
   if (result.steps.length > 12) throw new Error("The provider returned too many task steps.");
 
   return result.steps.map((step, index) => {
-    if (step.action.targetId !== target.id)
+    const action = normalizeKeyAction(step.action);
+    if (action.targetId !== target.id)
       throw new Error(`Plan step ${index + 1} targets an unselected desktop.`);
     if (
       supportedActions &&
-      step.action.kind !== "read_screen" &&
-      !supportedActions.includes(step.action.kind)
+      action.kind !== "read_screen" &&
+      !supportedActions.includes(action.kind)
     )
       throw new Error(`Plan step ${index + 1} uses an unsupported worker action.`);
     if (step.verification?.kind === "text_match" && !step.verification.expectedText?.trim())
       throw new Error(`Plan step ${index + 1} uses text_match verification without expected text.`);
-    if (target.interactionMode === "observe_only" && INPUT_ACTIONS.includes(step.action.kind))
+    if (target.interactionMode === "observe_only" && INPUT_ACTIONS.includes(action.kind))
       throw new Error(`Target "${target.displayName}" only permits observation.`);
-    const validation = validateAction(step.action);
+    const validation = validateAction(action);
     if (!validation.ok) throw new Error(`Plan step ${index + 1} is invalid: ${validation.reason}`);
 
     const policyRequiresApproval =
-      target.interactionMode !== "autonomous" && INPUT_ACTIONS.includes(step.action.kind);
+      target.interactionMode !== "autonomous" && INPUT_ACTIONS.includes(action.kind);
     return {
       id: sid(),
-      action: step.action,
+      action,
       requiresApproval: policyRequiresApproval || step.requiresApproval,
       verification: step.verification ?? {
         kind: step.action.kind === "read_screen" ? "screen_capture" : "worker_ok",
