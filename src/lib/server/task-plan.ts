@@ -161,6 +161,27 @@ const PLAN_JSON_SCHEMA = {
   },
 } as const;
 
+/**
+ * Gemini's native responseSchema is an OpenAPI subset that rejects
+ * `additionalProperties`. Strip it for the direct call; strictness is still
+ * enforced afterwards by server-side and client-side plan validation.
+ */
+export function toGeminiResponseSchema(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(toGeminiResponseSchema);
+  if (schema && typeof schema === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(schema as Record<string, unknown>)) {
+      if (key === "additionalProperties") continue;
+      out[key] = toGeminiResponseSchema(value);
+    }
+    return out;
+  }
+  return schema;
+}
+
+const GEMINI_RESPONSE_SCHEMA = toGeminiResponseSchema(PLAN_JSON_SCHEMA);
+
+
 function resolveGatewayModel(model?: string): string {
   const requested = (model ?? process.env["GEMINI_MODEL"] ?? "gemini-2.5-flash").trim();
   if (requested.includes("/")) return requested;
@@ -332,7 +353,7 @@ async function generateDirectGeminiPlan(input: TaskPlanRequestInput): Promise<Pr
             temperature: 0.2,
             maxOutputTokens: MAX_PLAN_TOKENS,
             responseMimeType: "application/json",
-            responseSchema: PLAN_JSON_SCHEMA,
+            responseSchema: GEMINI_RESPONSE_SCHEMA,
           },
         }),
         signal: controller.signal,
