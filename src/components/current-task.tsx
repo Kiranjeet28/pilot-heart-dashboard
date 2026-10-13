@@ -59,11 +59,21 @@ export function CurrentTask({ task }: { task?: Task | undefined }) {
       {s === "waiting_for_approval" && step ? (
         <div className="mt-4 rounded-md border border-warning/40 bg-warning/5 p-3">
           <p className="text-sm font-medium text-warning">
-            {real && !confirmed ? "Confirm first REAL desktop action" : "Approval required"}
+            {real && !confirmed ? "Confirm first REAL desktop action" : "Approve this plan to start"}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            The agent wants to: {step.action.description}
-            {step.action.text ? ` — “${step.action.text}”` : ""}.{" "}
+            The agent will run {task.steps.length} steps:
+          </p>
+          <ol className="mt-1 list-decimal pl-5 text-xs text-muted-foreground">
+            {task.steps.map((x) => (
+              <li key={x.id}>
+                {x.action.description}
+                {x.action.text ? ` — “${x.action.text}”` : ""}
+              </li>
+            ))}
+          </ol>
+          <p className="mt-1 text-xs text-muted-foreground">
+            You will not be asked again during this task.{" "}
             {real ? "This will act on your real Windows desktop." : "This would be simulated only."}
           </p>
           <div className="mt-2 flex gap-2">

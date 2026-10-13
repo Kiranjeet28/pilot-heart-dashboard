@@ -131,6 +131,8 @@ export interface Task {
   currentStep: number;
   retries: number;
   replans?: number;
+  /** Set once the user approves the plan before it starts; no per-step prompts after. */
+  planApproved?: boolean;
   deadlineAt?: number;
   summary?: string;
   error?: string;
