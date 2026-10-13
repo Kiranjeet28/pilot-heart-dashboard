@@ -52,7 +52,8 @@ class PyAutoGuiExecutor:
             time.sleep(0.01)
 
     def press(self, keys: str) -> None:
-        parts = keys.split("+")
+        # PyAutoGUI names the Windows key "win".
+        parts = ["win" if p == "windows" else p for p in keys.split("+")]
         if len(parts) == 1:
             self.pg.press(parts[0])
         else:
