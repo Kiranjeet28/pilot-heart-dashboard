@@ -140,10 +140,19 @@ export class LocalHttpWorker implements DesktopWorker {
       /* empty body */
     }
     if (!res.ok) {
-      const detail =
+      const baseDetail =
         typeof (data as { detail?: unknown })?.detail === "string"
           ? (data as { detail: string }).detail
           : `HTTP ${res.status}`;
+      const errs = (data as { errors?: Array<{ msg?: unknown }> })?.errors;
+      const reasons = Array.isArray(errs)
+        ? errs
+            .map((e) => (typeof e?.msg === "string" ? e.msg.slice(0, 120) : ""))
+            .filter(Boolean)
+            .slice(0, 3)
+            .join("; ")
+        : "";
+      const detail = reasons ? `${baseDetail}: ${reasons}` : baseDetail;
       const code: WorkerErrorCode =
         res.status === 401
           ? "unauthorized"
