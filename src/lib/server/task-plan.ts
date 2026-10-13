@@ -290,13 +290,107 @@ function buildPrompt(input: TaskPlanRequestInput): string {
   ].join("\n");
 }
 
-export async function generateGeminiTaskPlan(input: TaskPlanRequestInput): Promise<ProviderResult> {
-  const apiKey = process.env["LOVABLE_API_KEY"]?.trim();
+// ---------- Direct Gemini fallback (local runs without the Lovable gateway) ----------
+
+const GEMINI_DIRECT_URL = "https://generativelanguage.googleapis.com/v1beta/models";
+
+function resolveDirectGeminiModel(model?: string): string {
+  const requested = (model ?? process.env["GEMINI_MODEL"] ?? "gemini-2.5-flash").trim();
+  if (requested.includes("/")) return requested.split("/").pop() ?? requested;
+  return requested;
+}
+
+/** Call Gemini directly with the user's own key (GEMINI_API_KEY) — used for local runs. */
+async function generateDirectGeminiPlan(input: TaskPlanRequestInput): Promise<ProviderResult> {
+  const apiKey = process.env["GEMINI_API_KEY"]?.trim();
   if (!apiKey) {
     throw gatewayError(
       "missing_credentials",
-      "The AI gateway key (LOVABLE_API_KEY) is not configured for this project.",
+      "No AI key configured. Set GEMINI_API_KEY in your local .env (the built-in LOVABLE_API_KEY is only available in the Lovable preview).",
     );
+  }
+  const model = resolveDirectGeminiModel(input.modelOverride);
+  const timeoutMs = input.timeoutMs ?? 30000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(
+      `${GEMINI_DIRECT_URL}/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [
+              {
+                text: "You plan safe desktop automation steps for DesktopPilot. Respond only with JSON matching the requested schema.",
+              },
+            ],
+          },
+          contents: [{ role: "user", parts: [{ text: buildPrompt(input) }] }],
+          generationConfig: {
+            temperature: 0.2,
+            maxOutputTokens: MAX_PLAN_TOKENS,
+            responseMimeType: "application/json",
+            responseSchema: PLAN_JSON_SCHEMA,
+          },
+        }),
+        signal: controller.signal,
+      },
+    );
+
+    if (!response.ok) {
+      const message = await extractGatewayErrorMessage(response);
+      throw gatewayError(gatewayCodeFor(response.status), message, response.status);
+    }
+
+    const data = (await response.json()) as {
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    };
+    const rawText =
+      data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
+    if (!rawText.trim()) {
+      throw gatewayError("invalid_response", "Gemini returned an empty plan.", 502);
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(extractJsonObject(rawText));
+    } catch {
+      throw gatewayError(
+        "invalid_response",
+        "The AI returned a response that was not valid JSON.",
+        502,
+      );
+    }
+    try {
+      return normalizeProviderResponse(parsed);
+    } catch (error) {
+      throw gatewayError(
+        "invalid_response",
+        error instanceof Error ? error.message : "Malformed AI response",
+        502,
+      );
+    }
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error) throw error;
+    if (controller.signal.aborted) {
+      throw gatewayError("timeout", "AI planning request timed out.", 504);
+    }
+    throw gatewayError(
+      "network_error",
+      error instanceof Error ? error.message : "AI planning request failed",
+      502,
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function generateGeminiTaskPlan(input: TaskPlanRequestInput): Promise<ProviderResult> {
+  const apiKey = process.env["LOVABLE_API_KEY"]?.trim();
+  if (!apiKey) {
+    // Local run: fall back to the user's own Gemini key.
+    return generateDirectGeminiPlan(input);
   }
   const model = resolveGatewayModel(input.modelOverride);
   const timeoutMs = input.timeoutMs ?? 30000;
