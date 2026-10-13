@@ -95,4 +95,5 @@ export const DEFAULT_SETTINGS: AppSettings = {
   stepDelayMs: 1200,
   workerMode: "demo",
   workerPort: 8765,
+  adaptiveChecks: true,
 };

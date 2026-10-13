@@ -22,6 +22,16 @@ import { canTransition, isActive } from "@/lib/tasks/state-machine";
 import { normalizeProviderPlan } from "@/lib/tasks/planner";
 import { createAIProvider, MockAIProvider } from "@/lib/ai/provider";
 import { verifyActionOutcome } from "@/lib/tasks/verification";
+import {
+  MAX_REPLANS,
+  approvedScopeFrom,
+  buildReplanContext,
+  canReplan,
+  isWithinApprovedScope,
+  mergeRemaining,
+  shouldCheckAfter,
+} from "@/lib/tasks/adapt";
+import { requestStepCheck } from "@/lib/ai/step-check-client";
 import { validateAction } from "@/lib/worker/action-validation";
 import { MockDesktopWorker } from "@/lib/worker/mock-worker";
 import type { ActionResult, DesktopWorker, ObservationResult } from "@/lib/worker/worker";
@@ -200,6 +210,120 @@ function fail(id: string, error: string) {
     log(id, "error", error, sim, !sim);
 }
 
+/**
+ * Module 4 see-and-adapt: after a screen-changing step, check the screenshot and,
+ * when the screen is off track, replan the remaining steps inside the approved scope.
+ * Returns "handled" when it has already moved the task on (replanned or failed).
+ */
+async function checkAndAdapt(
+  id: string,
+  action: ActionRequest,
+  obs: ObservationResult | undefined,
+  sim: boolean,
+): Promise<"continue" | "handled"> {
+  const stillVerifying = () => getTask(id)?.status === "verifying" && !state.emergencyStop;
+  if (sim) {
+    patchTask(id, {
+      lastCheck: { verdict: "ok", reason: "Simulated check", simulated: true, checkedAt: Date.now() },
+    });
+    log(id, "info", "Screen check (simulated): looks right — no screen sent to AI", true);
+    return "continue";
+  }
+  if (!obs?.imageDataUrl || obs.simulated) {
+    log(id, "warning", "Could not tell — no real screenshot to check. Recorded as unverified.", false, true);
+    return "continue";
+  }
+  const t = getTask(id)!;
+  log(id, "info", "Checking the screen…", false, true);
+  const check = await requestStepCheck({
+    taskId: id,
+    targetId: t.targetId,
+    taskRequest: t.description,
+    stepDescription: action.description,
+    imageDataUrl: obs.imageDataUrl,
+  });
+  if (!stillVerifying()) return "handled";
+  patchTask(id, {
+    lastCheck: { verdict: check.verdict, reason: check.reason, simulated: false, checkedAt: Date.now() },
+  });
+  if (check.verdict === "ok") {
+    log(id, "result", `Looks right: ${check.reason}`, false, true);
+    return "continue";
+  }
+  if (check.verdict === "unsure") {
+    patchTask(id, { verification: { status: "unverified", reason: check.reason, checkedAt: Date.now() } });
+    log(id, "warning", `Could not tell: ${check.reason}. Recorded as unverified — continuing.`, false, true);
+    return "continue";
+  }
+  log(id, "warning", `Unexpected screen — adjusting plan: ${check.reason}`, false, true);
+  const cur = getTask(id)!;
+  if (!canReplan(cur.replans)) {
+    fail(id, `The screen was still off track after ${MAX_REPLANS} plan adjustments: ${check.reason}`);
+    return "handled";
+  }
+  const target = state.targets.find((x) => x.id === cur.targetId);
+  const provider = state.providers.find((x) => x.id === cur.providerId);
+  const profile = state.profiles.find((x) => x.id === cur.profileId);
+  if (!target || !provider || !profile || !cur.approvedScope) {
+    fail(id, "Cannot adjust the plan: task settings are missing");
+    return "handled";
+  }
+  const planned = await createAIProvider(provider, profile).getNextStep({
+    taskId: id,
+    userRequest: cur.description,
+    targetId: cur.targetId,
+    provider,
+    profile,
+    context: buildReplanContext(cur.steps, cur.currentStep, check),
+  });
+  if (!stillVerifying()) return "handled";
+  if (!planned.ok) {
+    fail(id, `Could not adjust the plan: ${planned.message}`);
+    return "handled";
+  }
+  let remaining;
+  try {
+    remaining = normalizeProviderPlan(planned, target);
+  } catch (e) {
+    fail(id, `Adjusted plan rejected: ${e instanceof Error ? e.message : "invalid plan"}`);
+    return "handled";
+  }
+  const scope = isWithinApprovedScope(remaining, cur.approvedScope);
+  if (!scope.ok) {
+    fail(
+      id,
+      `The plan needed actions you didn't approve (${scope.reason}). Start the task again to review them.`,
+    );
+    return "handled";
+  }
+  const merged = mergeRemaining(cur.steps, cur.currentStep, remaining);
+  if (!merged.ok) {
+    fail(id, `Could not adjust the plan: ${merged.reason}`);
+    return "handled";
+  }
+  const before = cur.steps.slice(cur.currentStep + 1).map((s) => s.action.description).join(" → ") || "(nothing)";
+  const after = remaining.map((s) => s.action.description).join(" → ");
+  const next = cur.currentStep + 1;
+  transition(id, "running");
+  patchTask(id, {
+    steps: merged.steps,
+    currentStep: next,
+    retries: 0,
+    replans: (cur.replans ?? 0) + 1,
+    progress: Math.round((next / merged.steps.length) * 100),
+    currentAction: undefined,
+  });
+  log(
+    id,
+    "info",
+    `Plan adjusted (${(cur.replans ?? 0) + 1}/${MAX_REPLANS}). Before: ${before}. Now: ${after}`,
+    false,
+    true,
+  );
+  schedule(id);
+  return "handled";
+}
+
 async function tick(id: string) {
   timers.delete(id);
   const t = getTask(id);
@@ -276,7 +400,11 @@ async function tick(id: string) {
             `The helper on your PC is an older version and does not allow: ${[...new Set(missing)].join(", ")}. In PowerShell: stop the helper (Ctrl+C), run "git pull", then ".\\start-worker.ps1" and pair again.`,
           );
       }
-      transition(id, "running", { steps, currentStep: 0 });
+      transition(id, "running", {
+        steps,
+        currentStep: 0,
+        approvedScope: approvedScopeFrom(steps, t.targetId),
+      });
       log(id, "info", `Plan ready: ${steps.length} ${sim ? "simulated" : "Gemini"} steps`, sim);
       return schedule(id);
     }
@@ -411,6 +539,10 @@ async function tick(id: string) {
         sim,
       );
     }
+    if (state.settings.adaptiveChecks !== false && shouldCheckAfter(action.kind)) {
+      const outcome = await checkAndAdapt(id, action, obs, sim);
+      if (outcome === "handled") return;
+    }
     const next = t.currentStep + 1;
     transition(id, "running");
     patchTask(id, {
@@ -478,6 +610,7 @@ export const actions = {
             stepDelayMs: settings.stepDelayMs,
             workerMode: settings.workerMode ?? "demo",
             workerPort: settings.workerPort ?? DEFAULT_SETTINGS.workerPort,
+            adaptiveChecks: settings.adaptiveChecks ?? DEFAULT_SETTINGS.adaptiveChecks,
           }
         : DEFAULT_SETTINGS,
       emergencyStop: settings?.emergencyStop ?? false,

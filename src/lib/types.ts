@@ -133,6 +133,20 @@ export interface Task {
   replans?: number;
   /** Set once the user approves the plan before it starts; no per-step prompts after. */
   planApproved?: boolean;
+  /** Module 4: what the user approved; replanned steps must stay inside it. */
+  approvedScope?: {
+    targetId: string;
+    kinds: ActionKind[];
+    keys: string[];
+    texts: string[];
+  };
+  /** Module 4: latest screen check after a step. */
+  lastCheck?: {
+    verdict: "ok" | "off_track" | "unsure";
+    reason: string;
+    simulated: boolean;
+    checkedAt: number;
+  };
   deadlineAt?: number;
   summary?: string;
   error?: string;
@@ -159,4 +173,6 @@ export interface AppSettings {
   stepDelayMs: number;
   workerMode: WorkerSelection;
   workerPort: number;
+  /** Module 4: check the screen after each step and adjust the plan if needed. */
+  adaptiveChecks: boolean;
 }
