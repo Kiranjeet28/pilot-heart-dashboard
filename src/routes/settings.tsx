@@ -95,6 +95,23 @@ function SettingsPage() {
           </div>
         </Panel>
       ) : null}
+      <Panel title="See and adapt">
+        <div className="flex items-center justify-between gap-4">
+          <Label htmlFor="adapt" className="flex flex-col items-start gap-1">
+            <span>Check the screen after each step</span>
+            <span className="text-xs font-normal text-muted-foreground">
+              {mode === "real_local"
+                ? "After each real step, a screenshot is sent to Google Gemini to check it worked. If not, the remaining steps are adjusted — only with actions you already approved. Screenshots are never saved."
+                : "Demo mode shows simulated checks only. Nothing is sent to the AI."}
+            </span>
+          </Label>
+          <Switch
+            id="adapt"
+            checked={settings.adaptiveChecks}
+            onCheckedChange={(c) => actions.updateSettings({ adaptiveChecks: c })}
+          />
+        </div>
+      </Panel>
       <Panel title="Safety">
         <div className="flex items-center justify-between">
           <div>
