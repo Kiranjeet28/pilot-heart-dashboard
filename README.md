@@ -99,8 +99,9 @@ sent, and the worker answers `423 worker_stopped` until the emergency stop is re
 Task planning calls `POST /api/tasks/plan` (registered in `src/routes/api/tasks/plan.ts` →
 `src/lib/server/task-plan.ts`).
 
-- Configure a Gemini key as the server-side secret/env var `GEMINI_API_KEY` (never `VITE_*`,
-  never in browser code). Optionally set `GEMINI_MODEL` (default `gemini-2.5-flash`). See
+- Planning runs through the built-in Lovable AI gateway; no provider API key is required
+  (`LOVABLE_API_KEY` is provisioned automatically, server-side only). Optionally set
+  `GEMINI_MODEL` to override the planning model (e.g. `google/gemini-2.5-flash`). See
   `.env.example`.
 - Security: the route accepts only (a) same-origin browser requests that positively prove it —
   matching `Origin`/`Referer` (or `Sec-Fetch-Site: same-origin` plus a matching header) — or
