@@ -2,7 +2,7 @@
 // and neither ever contains secrets. Swap for a backend adapter later behind the same API.
 const PREFIX = "desktoppilot.v1.";
 
-export type StoreKey = "config" | "tasks" | "activity" | "settings";
+export type StoreKey = "config" | "tasks" | "activity" | "settings" | "prompts";
 
 export function load<T>(key: StoreKey): T | undefined {
   if (typeof window === "undefined") return undefined;
@@ -25,7 +25,7 @@ export function save(key: StoreKey, value: unknown) {
 
 export function clearAll() {
   if (typeof window === "undefined") return;
-  (["config", "tasks", "activity", "settings"] as StoreKey[]).forEach((k) =>
+  (["config", "tasks", "activity", "settings", "prompts"] as StoreKey[]).forEach((k) =>
     window.localStorage.removeItem(PREFIX + k),
   );
 }

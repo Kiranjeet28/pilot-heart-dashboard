@@ -8,6 +8,7 @@ import {
   Monitor,
   Settings,
   Plane,
+  SquarePen,
 } from "lucide-react";
 import {
   Sidebar,
@@ -24,6 +25,7 @@ import {
 
 const items = [
   { title: "Dashboard", url: "/", icon: LayoutDashboard },
+  { title: "Prompt", url: "/prompt", icon: SquarePen },
   { title: "Tasks", url: "/tasks", icon: ListTodo },
   { title: "Activity", url: "/activity", icon: Activity },
   { title: "Providers", url: "/providers", icon: Cpu },
@@ -53,7 +55,7 @@ export function AppSidebar() {
             <SidebarMenu>
               {items.map((item) => (
                 <SidebarMenuItem key={item.url}>
-                  <SidebarMenuButton asChild isActive={path === item.url} tooltip={item.title}>
+                  <SidebarMenuButton asChild isActive={path === item.url || (item.url === "/tasks" && path.startsWith("/task/"))} tooltip={item.title}>
                     <Link to={item.url}>
                       <item.icon className="h-4 w-4" />
                       <span>{item.title}</span>
@@ -67,7 +69,7 @@ export function AppSidebar() {
       </SidebarContent>
       <SidebarFooter>
         <p className="px-2 pb-1 font-mono text-[10px] text-muted-foreground group-data-[collapsible=icon]:hidden">
-          Milestone 1 · demo build
+          Desktop agent control center
         </p>
       </SidebarFooter>
     </Sidebar>
