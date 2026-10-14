@@ -128,7 +128,7 @@ describe("4. context budget", () => {
     expect(estimateTokens("x".repeat(35))).toBe(10);
   });
   it("drops oldest history first and keeps the user request", () => {
-    const ctx = ["OLDEST " + "a".repeat(6000), "b".repeat(6000), "NEWEST"];
+    const ctx = ["OLDEST " + "a".repeat(10000), "b".repeat(10000), "NEWEST"];
     const p = fitLocalPrompt("Open Notepad", "notepad", ctx)!;
     expect(p).toContain("Open Notepad");
     expect(p).not.toContain("OLDEST");
