@@ -229,6 +229,6 @@ When Gemini fails (quota, server error, network, bad answer), the dashboard can 
 
 After a Gemini failure, the app uses the local model for 5 minutes, or for the wait time Google gives. After that it tries Gemini again.
 
-**Port clash:** llama-server and the local dashboard both use port 8080 by default. If you run the dashboard on your PC, start llama-server on another port (`--port 8081`) and set the address to `http://127.0.0.1:8081`.
+**Port clash:** llama-server and the local dashboard both use port 8080 by default. If you run the dashboard on your PC, the app now expects llama-server on port 8081 — start it with `--port 8081`.
 
 **Limits:** the local model can't see screenshots, so screen checks are skipped while it's in use. Plans are slow on CPU (up to 5 minutes). The same safety checks apply to every local plan.
