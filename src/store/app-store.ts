@@ -422,7 +422,10 @@ async function tick(id: string) {
             targetId: t.targetId,
             provider,
             profile,
-            context: t.lastVerifiedResult ? [t.lastVerifiedResult] : [],
+            context: [
+              ...(t.context ? [`Project context from the user: ${t.context.slice(0, 480)}`] : []),
+              ...(t.lastVerifiedResult ? [t.lastVerifiedResult] : []),
+            ],
           });
       if (getTask(id)?.status !== "planning" || state.emergencyStop) return;
       if (!planned.ok)
