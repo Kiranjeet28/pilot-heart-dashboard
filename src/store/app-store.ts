@@ -139,6 +139,16 @@ export const localWorker = new LocalHttpWorker({
   port: () => state.settings.workerPort,
   getToken: () => readSession()?.token ?? null,
 });
+/** One AbortController per task so Cancel/Stop also aborts an in-flight local model call. */
+const aiAborts = new Map<string, AbortController>();
+function aiAbortFor(id: string): AbortSignal {
+  let c = aiAborts.get(id);
+  if (!c || c.signal.aborted) {
+    c = new AbortController();
+    aiAborts.set(id, c);
+  }
+  return c.signal;
+}
 configureAiRouting(() => ({
   mode: state.settings.aiMode,
   localBaseUrl: state.settings.localBaseUrl,
@@ -289,7 +299,7 @@ async function checkAndAdapt(
     return "handled";
   }
   const ask = () =>
-    routedProvider(provider, profile).getNextStep({
+    routedProvider(provider, profile, aiAbortFor(id)).getNextStep({
       taskId: id,
       userRequest: cur.description,
       targetId: cur.targetId,
@@ -406,7 +416,7 @@ async function tick(id: string) {
             provider,
             profile,
           })
-        : await routedProvider(provider, profile).getNextStep({
+        : await routedProvider(provider, profile, aiAbortFor(id)).getNextStep({
             taskId: id,
             userRequest: t.description,
             targetId: t.targetId,
@@ -740,6 +750,8 @@ export const actions = {
   cancel(id: string, reason = "Cancelled by user") {
     if (!transition(id, "cancelled", { summary: reason })) return;
     clearTimer(id);
+    aiAborts.get(id)?.abort();
+    aiAborts.delete(id);
     void currentWorker().cancelTask(id);
     log(id, "warning", reason, false);
   },

@@ -191,7 +191,6 @@ export function fitLocalPrompt(
     if (!ctx.length) break;
     ctx = ctx.slice(1); // drop oldest first
   }
-  // Still too big with no history: shorten observation text is no longer possible.
   return null;
 }
 /** Shorten observation/history lines once before dropping them entirely. */
