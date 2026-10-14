@@ -16,6 +16,12 @@ const plan = {
   summary: "ok",
   steps: [{ action: { kind: "read_screen", targetId: "notepad", description: "Look" }, requiresApproval: false }],
 };
+const sse = (text: string, chunk = 20) => {
+  let body = "";
+  for (let i = 0; i < text.length; i += chunk)
+    body += `data: ${JSON.stringify({ choices: [{ delta: { content: text.slice(i, i + chunk) } }] })}\n\n`;
+  return new Response(body + "data: [DONE]\n\n", { headers: { "content-type": "text/event-stream" } });
+};
 const req = { userRequest: "Open Notepad", targetId: "notepad", provider: DEFAULT_PROVIDERS[0]! };
 
 let mode: AiMode = "auto";
@@ -29,7 +35,7 @@ beforeEach(() => {
   localUp = true;
   calls.length = 0;
   gemini = () => Response.json(plan);
-  configureAiRouting(() => ({ mode, localBaseUrl: "http://127.0.0.1:8080" }));
+  configureAiRouting(() => ({ mode, localBaseUrl: "http://127.0.0.1:8081" }));
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
@@ -40,8 +46,7 @@ beforeEach(() => {
         if (!localUp) throw new TypeError("Failed to fetch");
         return Response.json({ status: "ok" });
       }
-      if (url.endsWith("/v1/chat/completions"))
-        return Response.json({ choices: [{ message: { content: JSON.stringify(plan) } }] });
+      if (url.endsWith("/v1/chat/completions")) return sse(JSON.stringify(plan));
       return new Response("no", { status: 404 });
     }),
   );
