@@ -93,7 +93,7 @@ const trimBase = (u: string) => (u.trim() || DEFAULT_LOCAL_BASE_URL).replace(/\/
 export function cooldownFor(message: string): number {
   const m = message.match(/retry (?:in|after) ([\d.]+)\s*s/i);
   if (!m) return GEMINI_COOLDOWN_MS;
-  return Math.min(MAX_COOLDOWN_MS, Math.max(1000, Math.ceil(Number(m[1]) * 1000)));
+  return Math.min(MAX_COOLDOWN_MS, Math.max(1000, Math.ceil(Number(m[1])) * 1000));
 }
 
 export const isGeminiCoolingDown = (now = Date.now()) => status.geminiDownUntil > now;
