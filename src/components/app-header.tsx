@@ -1,3 +1,4 @@
+import { AiProviderBadge } from "@/components/ai-routing";
 import { OctagonX, RotateCcw } from "lucide-react";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
@@ -44,6 +45,7 @@ export function AppHeader() {
         )}
       </div>
       <div className="ml-auto flex items-center gap-2">
+        <AiProviderBadge />
         {estop ? (
           <Button
             size="sm"
