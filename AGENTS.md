@@ -35,3 +35,4 @@
 - Every planning call goes through `runWithFallback` (src/lib/ai/aiProvider.ts, used via `routedProvider` in the store): Gemini via `/api/tasks/plan` first, then the user's local llama.cpp server called from the browser (it only listens on the user's PC). Gemini keys stay server-side.
 - The planning prompt/schema lives in src/lib/ai/plan-prompt.ts so Gemini and the local model ask for the same format; local plans still pass `normalizeProviderPlan` + `validateAction`.
 - The local model is text-only: screen checks are skipped (`unsure`) while Gemini is unavailable — never faked.
+- Local model calls stream, run one at a time through `enqueueLocal`, fit the 7000-token budget (`fitLocalPrompt`), never include image parts, and are aborted by the per-task AbortController when a task is cancelled.
