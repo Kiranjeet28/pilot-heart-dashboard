@@ -3,13 +3,22 @@ import type { AccountProfile, AppSettings, DesktopTarget, Provider } from "@/lib
 
 export const DEFAULT_PROVIDERS: Provider[] = [
   {
+    id: "qwen",
+    displayName: "Local Qwen",
+    type: "custom",
+    connectionMethod: "local_endpoint",
+    model: "qwen",
+    enabled: true,
+    connectionStatus: "configured_unverified",
+  },
+  {
     id: "gemini",
     displayName: "Google Gemini",
     type: "gemini",
     connectionMethod: "api_key",
     model: "gemini-2.5-flash",
-    enabled: true,
-    connectionStatus: "configured_unverified",
+    enabled: false,
+    connectionStatus: "not_configured",
   },
   {
     id: "openai",
@@ -29,33 +38,24 @@ export const DEFAULT_PROVIDERS: Provider[] = [
     enabled: false,
     connectionStatus: "not_configured",
   },
-  {
-    id: "custom-local",
-    displayName: "Custom (local endpoint)",
-    type: "custom",
-    connectionMethod: "local_endpoint",
-    model: "",
-    enabled: false,
-    connectionStatus: "not_configured",
-  },
 ];
 
 export const DEFAULT_PROFILES: AccountProfile[] = [
   {
     id: "personal",
     name: "Personal",
-    providerId: "gemini",
-    authMethod: "api_key_ref",
-    credentialRef: "GEMINI_API_KEY",
-    notes: "",
+    providerId: "qwen",
+    authMethod: "none",
+    credentialRef: "",
+    notes: "Local model",
   },
   {
     id: "work",
     name: "Work",
-    providerId: "gemini",
-    authMethod: "api_key_ref",
-    credentialRef: "GEMINI_API_KEY",
-    notes: "",
+    providerId: "qwen",
+    authMethod: "none",
+    credentialRef: "",
+    notes: "Local model",
   },
 ];
 
@@ -96,6 +96,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   workerMode: "demo",
   workerPort: 8765,
   adaptiveChecks: true,
-  aiMode: "auto",
+  aiMode: "local",
   localBaseUrl: "http://127.0.0.1:8081",
 };

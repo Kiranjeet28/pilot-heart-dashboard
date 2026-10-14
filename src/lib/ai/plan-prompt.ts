@@ -1,10 +1,15 @@
-// Shared, secret-free planning prompt + schema. Used by the server Gemini route and the
-// browser-side local-model fallback so both ask for exactly the same plan format.
+// Shared, secret-free planning prompt + schema for DesktopPilot's local Qwen planner.
+// Kept compact, stable and bounded for local llama-server context and prompt cache reuse.
+
 export interface PlanPromptInput {
   userRequest: string;
   targetId?: string | undefined;
   context?: string[] | undefined;
 }
+
+/** Stable system prompt for llama.cpp prompt-cache reuse across planning calls. */
+export const LOCAL_SYSTEM =
+  "You are DesktopPilot's local task planner. Return valid JSON only matching the schema (max 12 steps). Plan safe desktop automation for the target.";
 
 /** Strict JSON schema the model must emit. */
 export const PLAN_JSON_SCHEMA = {
@@ -70,25 +75,24 @@ export const PLAN_JSON_SCHEMA = {
   },
 } as const;
 
+/**
+ * Compact, consistent prompt for initial planning and replanning.
+ * Pins target ID, user objective, allowed action kinds, verification rules, and max steps.
+ * Omits redundant schema duplicates since llama-server grammar enforces response_format directly.
+ */
 export function buildPlanPrompt(input: PlanPromptInput): string {
+  const targetId = input.targetId ?? "desktop";
   const safeRequest = input.userRequest.trim();
-  const targetLine = `Selected desktop target ID: ${input.targetId ?? "desktop"}. Every action's targetId MUST be exactly this value.`;
-  const contextText = input.context?.length
-    ? `\nContext:\n${input.context.map((item) => `- ${item}`).join("\n")}`
+  const contextLines = input.context?.filter((c) => c && c.trim().length > 0) ?? [];
+  const contextBlock = contextLines.length
+    ? `\nContext:\n${contextLines.map((item) => `- ${item.trim()}`).join("\n")}`
     : "";
+
   return [
-    "Return only valid JSON with this exact shape:",
-    "{",
-    '  "plan": ["step 1 description", "step 2 description"],',
-    '  "summary": "short summary",',
-    '  "steps": [{ "action": { "kind": "read_screen", "targetId": "<selected target id>", "description": "inspect the desktop" }, "requiresApproval": false, "verification": { "kind": "screen_capture" } }]',
-    "}",
-    "Choose only safe desktop actions from this allowlist: focus_window, read_screen, click, type_text, key_press, wait, copy_selection, paste.",
-    targetLine,
-    `Task: ${safeRequest}${contextText}`,
-    "Verification kinds: worker_ok and screen_capture are always allowed. Use text_match only when you also provide expectedText for text you know will appear on screen. Use clipboard only for copy_selection steps. Never invent verification evidence.",
-    "Keep the plan bounded to at most 12 steps and realistic for DesktopPilot. Include verification for every step and avoid unsafe or destructive actions.",
-    "The response must be parseable by JSON.parse without commentary or markdown fences.",
+    `Selected target: "${targetId}". Every action's targetId MUST be exactly "${targetId}".`,
+    `Task: ${safeRequest}${contextBlock}`,
+    "Allowed actions: focus_window, read_screen, click, type_text, key_press, wait, copy_selection, paste.",
+    "Verification: worker_ok and screen_capture are always allowed. Use text_match only with expectedText for known on-screen text. Use clipboard only for copy_selection.",
+    "Requirements: Safe actions only. Max 12 steps. Every step must have action, requiresApproval, and verification.",
   ].join("\n");
 }
-

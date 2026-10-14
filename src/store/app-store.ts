@@ -307,17 +307,8 @@ async function checkAndAdapt(
       profile,
       context: buildReplanContext(cur.steps, cur.currentStep, check),
     });
-  let planned = await ask();
+  const planned = await ask();
   if (!stillVerifying()) return "handled";
-  // Free-tier quota: wait once for the hinted time (max 65 s), then try one more time.
-  if (!planned.ok && planned.code === "rate_limit") {
-    const wait = parseRetryAfterSeconds(planned.message) ?? 60;
-    log(id, "warning", `AI quota reached — waiting ${wait} s, then adjusting the plan once more`, false, true);
-    await new Promise((r) => setTimeout(r, wait * 1000));
-    if (!stillVerifying()) return "handled";
-    planned = await ask();
-    if (!stillVerifying()) return "handled";
-  }
   if (!planned.ok) {
     fail(id, `Could not adjust the plan: ${planned.message}`);
     return "handled";
@@ -407,7 +398,7 @@ async function tick(id: string) {
       const provider = state.providers.find((x) => x.id === t.providerId);
       const profile = state.profiles.find((x) => x.id === t.profileId);
       if (!provider || !profile) return fail(id, "Task provider or profile no longer exists");
-      log(id, "info", sim ? "Planning with mock provider" : "Planning with Gemini");
+      log(id, "info", sim ? "Planning with mock provider" : "Planning with Local Qwen");
       const planned = sim
         ? await new MockAIProvider().getNextStep({
             taskId: id,
@@ -449,7 +440,7 @@ async function tick(id: string) {
         currentStep: 0,
         approvedScope: approvedScopeFrom(steps, t.targetId),
       });
-      log(id, "info", `Plan ready: ${steps.length} ${sim ? "simulated" : "Gemini"} steps`, sim);
+      log(id, "info", `Plan ready: ${steps.length} ${sim ? "simulated" : "Local Qwen"} steps`, sim);
       return schedule(id);
     }
     if (t.status !== "running") return;
@@ -728,6 +719,7 @@ export const actions = {
   start(id: string): string[] {
     const t = getTask(id);
     if (!t) return ["Task not found"];
+    if (isActive(t.status)) return ["Task is already active"];
     const issues = actions
       .readiness(t)
       .filter(

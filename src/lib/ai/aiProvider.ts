@@ -1,10 +1,8 @@
-// AI provider layer: Gemini first, automatic fallback to a local llama.cpp model.
-// runWithFallback is the single entry point for every AI planning call in the app.
-// The Gemini key stays server-side (/api/tasks/plan). The local model is called from the
-// browser because it only listens on the user's own PC.
+// AI provider layer: local Qwen (llama-server) exclusive task planning.
+// All planning and replanning calls route directly through local Qwen at http://127.0.0.1:8081.
+// Never calls Gemini or Lovable AI Gateway for planning.
 import { toast } from "sonner";
 import {
-  GeminiProvider,
   createAIProvider,
   normalizeProviderResponse,
   type AIProviderResult,
@@ -12,27 +10,31 @@ import {
   type ProviderAdapter,
   type ProviderFailure,
 } from "@/lib/ai/provider";
-import { PLAN_JSON_SCHEMA, buildPlanPrompt } from "@/lib/ai/plan-prompt";
+import {
+  PLAN_JSON_SCHEMA,
+  LOCAL_SYSTEM,
+  buildPlanPrompt,
+} from "@/lib/ai/plan-prompt";
 import type { AccountProfile, Provider } from "@/lib/types";
 
 export type AiMode = "auto" | "gemini" | "local";
-export type ActiveProvider = "gemini" | "local" | "offline";
+export type ActiveProvider = "local" | "offline" | "gemini";
 
 export const DEFAULT_LOCAL_BASE_URL = "http://127.0.0.1:8081";
-export const GEMINI_COOLDOWN_MS = 5 * 60_000;
 export const LOCAL_HEALTH_CACHE_MS = 10_000;
 export const LOCAL_HEALTH_TIMEOUT_MS = 2_000;
 /** Abort a local call only when no new token arrives for this long… */
 export const LOCAL_IDLE_TIMEOUT_MS = 90_000;
 /** …or when the whole call exceeds this hard cap. */
 export const LOCAL_HARD_CAP_MS = 15 * 60_000;
-export const LOCAL_MAX_TOKENS = 1024;
+/** Reduced from 1024 to 700 tokens: sufficient for up to 12 concise steps without truncation. */
+export const LOCAL_MAX_TOKENS = 700;
 export const LOCAL_TOKEN_BUDGET = 7000;
 export const CHARS_PER_TOKEN = 3.5;
-const MAX_COOLDOWN_MS = 60 * 60_000;
+export const GEMINI_COOLDOWN_MS = 300_000;
 
 export const OFFLINE_MESSAGE =
-  "Gemini unavailable and local model is offline. Start run-model.bat on your PC.";
+  "Cannot reach local Qwen at http://127.0.0.1:8081. Start llama-server on your PC.";
 export const LOCAL_BLOCKED_MESSAGE =
   "Cannot reach the local model. Make sure it is running and the browser allows local network access.";
 export const TOO_LARGE_MESSAGE =
@@ -45,41 +47,48 @@ export interface AiRoutingConfig {
 
 export interface ProviderLogEntry {
   at: number;
-  provider: "gemini" | "local";
+  provider: "local";
   ok: boolean;
   note: string;
   latencyMs?: number;
   outputTokens?: number;
   tokensPerSec?: number;
+  timeToFirstTokenMs?: number;
+  promptMs?: number;
+  promptTokens?: number;
+  cacheTokens?: number;
   fallbackReason?: string;
 }
 
 export interface AiStatus {
   active: ActiveProvider;
   geminiDownUntil: number;
-  /** Why Gemini last failed (shown while it cools down). */
   lastGeminiError: string;
   localThinking: boolean;
-  /** Tokens streamed so far by the in-flight local call. */
   localTokens: number;
+  phase: "idle" | "connecting" | "processing_prompt" | "generating";
   log: ProviderLogEntry[];
 }
 
 // ---------- small observable status (UI reads it via subscribe/get) ----------
 const initialStatus = (): AiStatus => ({
-  active: "gemini",
+  active: "local",
   geminiDownUntil: 0,
   lastGeminiError: "",
   localThinking: false,
   localTokens: 0,
+  phase: "idle",
   log: [],
 });
+
 let status: AiStatus = initialStatus();
 const listeners = new Set<() => void>();
+
 function setStatus(p: Partial<AiStatus>) {
   status = { ...status, ...p };
   listeners.forEach((l) => l());
 }
+
 export const aiStatus = {
   get: () => status,
   subscribe: (l: () => void) => {
@@ -88,16 +97,20 @@ export const aiStatus = {
   },
 };
 
-let getConfig: () => AiRoutingConfig = () => ({ mode: "auto", localBaseUrl: DEFAULT_LOCAL_BASE_URL });
+let getConfig: () => AiRoutingConfig = () => ({
+  mode: "local",
+  localBaseUrl: DEFAULT_LOCAL_BASE_URL,
+});
+
 /** The store injects its settings getter so the mode/base URL live with the other settings. */
 export function configureAiRouting(getter: () => AiRoutingConfig) {
   getConfig = getter;
 }
 
-function record(entry: Omit<ProviderLogEntry, "at">) {
-  const full = { at: Date.now(), ...entry };
+function record(entry: Omit<ProviderLogEntry, "at" | "provider"> & { provider?: "local" }) {
+  const full: ProviderLogEntry = { at: Date.now(), provider: "local", ...entry };
   console.info(
-    `[DesktopPilot AI] ${entry.provider} ${entry.ok ? "handled" : "failed"}: ${entry.note}`,
+    `[DesktopPilot AI] local ${entry.ok ? "handled" : "failed"}: ${entry.note}`,
     entry.latencyMs !== undefined ? `(${(entry.latencyMs / 1000).toFixed(1)} s)` : "",
   );
   setStatus({ log: [full, ...status.log].slice(0, 30) });
@@ -107,11 +120,11 @@ function switchTo(next: ActiveProvider, why?: string) {
   const prev = status.active;
   if (prev === next) return;
   setStatus({ active: next });
-  if (next === "local" && prev === "gemini")
-    toast.warning(why ?? "Gemini limit reached, switched to local model");
-  else if (next === "gemini" && prev !== "gemini")
-    toast.success("Gemini is back — switched back from the local model");
-  else if (next === "offline") toast.error(OFFLINE_MESSAGE);
+  if (next === "offline") {
+    toast.error(why ?? OFFLINE_MESSAGE);
+  } else if (next === "local" && prev === "offline") {
+    toast.success("Connected to local Qwen planner");
+  }
 }
 
 // ---------- helpers ----------
@@ -121,29 +134,47 @@ const trimBase = (u: string) => (u.trim() || DEFAULT_LOCAL_BASE_URL).replace(/\/
 export function isLoopbackUrl(v: string): boolean {
   try {
     const u = new URL(v);
-    return (u.protocol === "http:" || u.protocol === "https:") && ["127.0.0.1", "localhost"].includes(u.hostname);
+    return (
+      (u.protocol === "http:" || u.protocol === "https:") &&
+      ["127.0.0.1", "localhost"].includes(u.hostname)
+    );
   } catch {
     return false;
   }
 }
 
-/** Cooldown from a Retry-After style hint ("retry in 58s"), else the default 5 minutes. */
+/** Legacy helper preserved for tests; planning never cools down remote providers. */
 export function cooldownFor(message: string): number {
   const m = message.match(/retry (?:in|after) ([\d.]+)\s*s/i);
   if (!m) return GEMINI_COOLDOWN_MS;
-  return Math.min(MAX_COOLDOWN_MS, Math.max(1000, Math.ceil(Number(m[1])) * 1000));
+  return Math.min(3600_000, Math.max(1000, Math.ceil(Number(m[1])) * 1000));
 }
 
-export const isGeminiCoolingDown = (now = Date.now()) => status.geminiDownUntil > now;
-
-/** "Retry Gemini now": clear the cooldown so the next call tries Gemini first. */
+export const isGeminiCoolingDown = (_now = Date.now()) => false;
 export function retryGeminiNow() {
-  setStatus({ geminiDownUntil: 0, ...(status.active !== "gemini" ? { active: "gemini" as const } : {}) });
+  setStatus({ geminiDownUntil: 0, active: "local" });
 }
 
 const isUserAbort = (signal?: AbortSignal) => Boolean(signal?.aborted);
 
-export const estimateTokens = (text: string) => Math.ceil(text.length / CHARS_PER_TOKEN);
+/**
+ * Accurately estimates token count:
+ * Tokenizes words, numbers, punctuation sequences and whitespace chunks.
+ */
+export function estimateTokens(text: string): number {
+  if (!text) return 0;
+  const chunks = text.match(/[\p{L}\p{N}]+|[^\s\p{L}\p{N}]+|\s+/gu);
+  if (!chunks) return Math.ceil(text.length / CHARS_PER_TOKEN);
+  let count = 0;
+  for (const chunk of chunks) {
+    if (/^[\x00-\x7F]+$/.test(chunk)) {
+      count += Math.max(1, Math.ceil(chunk.length / 4));
+    } else {
+      count += chunk.length;
+    }
+  }
+  return count;
+}
 
 /** Remove <think>…</think> blocks (and a dangling unclosed one) before parsing. */
 export function stripThinking(text: string): string {
@@ -167,14 +198,12 @@ export function stripImageParts(messages: ChatMessage[]): Array<{ role: string; 
   }));
 }
 
-// System prompt is first and byte-identical on every call so llama.cpp's prompt cache can reuse it.
-export const LOCAL_SYSTEM =
-  "You plan safe desktop automation steps for DesktopPilot. Reply with JSON only, matching the given schema. At most 12 steps.";
+export { LOCAL_SYSTEM };
 
 /**
  * Fit the request into the local context budget: prompt + max_tokens <= 7000.
- * Drop the oldest context lines first, then shorten the remaining ones.
- * Never cuts the system prompt or the user's request. Returns null when it cannot fit.
+ * Drops oldest context lines first, then shortens remaining lines.
+ * Never cuts the system prompt or the user's core request. Returns null when oversized.
  */
 export function fitLocalPrompt(
   userRequest: string,
@@ -182,20 +211,28 @@ export function fitLocalPrompt(
   context: string[],
   extraTokens = 0,
 ): string | null {
+  const schemaOverhead = 120;
   const fits = (ctx: string[]) => {
     const prompt = buildPlanPrompt({ userRequest, targetId, context: ctx });
-    const total = estimateTokens(LOCAL_SYSTEM) + estimateTokens(prompt) + extraTokens + LOCAL_MAX_TOKENS;
+    const total =
+      estimateTokens(LOCAL_SYSTEM) +
+      estimateTokens(prompt) +
+      schemaOverhead +
+      extraTokens +
+      LOCAL_MAX_TOKENS;
     return total <= LOCAL_TOKEN_BUDGET ? prompt : null;
   };
+
   let ctx = [...context];
   for (;;) {
     const p = fits(ctx);
     if (p) return p;
     if (!ctx.length) break;
-    ctx = ctx.slice(1); // drop oldest first
+    ctx = ctx.slice(1); // drop oldest context line first
   }
   return null;
 }
+
 /** Shorten observation/history lines once before dropping them entirely. */
 function shortenContext(context: string[]) {
   return context.map((c) => (c.length > 200 ? `${c.slice(0, 197)}...` : c));
@@ -203,6 +240,7 @@ function shortenContext(context: string[]) {
 
 // ---------- single local request at a time ----------
 let localQueue: Promise<unknown> = Promise.resolve();
+
 /** Run local calls strictly one after another (llama-server handles one request). */
 export function enqueueLocal<T>(job: () => Promise<T>): Promise<T> {
   const run = localQueue.then(job, job);
@@ -210,15 +248,20 @@ export function enqueueLocal<T>(job: () => Promise<T>): Promise<T> {
   return run;
 }
 
-// ---------- local model ----------
+// Deduplicate concurrent planning calls for the same task
+const inFlightPlanning = new Map<string, Promise<AIProviderResult>>();
+
+// ---------- local model health ----------
 let healthCache: { url: string; at: number; ok: boolean; message: string } | null = null;
 
-export async function checkLocalHealth(force = false): Promise<{ ok: boolean; message: string }> {
+export async function checkLocalHealth(force = false): Promise<{ ok: boolean; message: string; latencyMs: number }> {
   const url = trimBase(getConfig().localBaseUrl);
-  if (!force && healthCache && healthCache.url === url && Date.now() - healthCache.at < LOCAL_HEALTH_CACHE_MS)
-    return healthCache;
+  if (!force && healthCache && healthCache.url === url && Date.now() - healthCache.at < LOCAL_HEALTH_CACHE_MS) {
+    return { ...healthCache, latencyMs: 0 };
+  }
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), LOCAL_HEALTH_TIMEOUT_MS);
+  const start = Date.now();
   let result: { ok: boolean; message: string };
   try {
     const res = await fetch(`${url}/health`, { signal: controller.signal });
@@ -230,13 +273,16 @@ export async function checkLocalHealth(force = false): Promise<{ ok: boolean; me
   } catch {
     result = {
       ok: false,
-      message: controller.signal.aborted ? "Local model did not answer within 2 seconds" : LOCAL_BLOCKED_MESSAGE,
+      message: controller.signal.aborted
+        ? "Local model did not answer within 2 seconds"
+        : LOCAL_BLOCKED_MESSAGE,
     };
   } finally {
     clearTimeout(timer);
   }
+  const latencyMs = Date.now() - start;
   healthCache = { url, at: Date.now(), ...result };
-  return result;
+  return { ...result, latencyMs };
 }
 
 const fail = (code: ProviderFailure["code"], message: string, retryable = false): ProviderFailure => ({
@@ -251,13 +297,18 @@ interface StreamOutcome {
   text: string;
   tokens: number;
   elapsedMs: number;
+  timeToFirstTokenMs?: number;
+  promptMs?: number;
+  promptTokens?: number;
+  cacheTokens?: number;
   error?: "timeout" | "idle" | "cancelled" | "network" | "http";
   status?: number;
 }
 
 /**
  * Streamed chat call to llama-server. Aborts after 90 s with no new token, or 15 min total.
- * reasoning_content deltas are ignored; only content is collected.
+ * Connects with stream: true, cache_prompt: true, enable_thinking: false.
+ * Tracks prompt processing vs generation time accurately.
  */
 export async function streamLocalChat(
   body: Record<string, unknown>,
@@ -267,6 +318,11 @@ export async function streamLocalChat(
   const url = trimBase(getConfig().localBaseUrl);
   const controller = new AbortController();
   const started = Date.now();
+  let timeToFirstTokenMs: number | undefined;
+  let promptMs: number | undefined;
+  let promptTokens: number | undefined;
+  let cacheTokens: number | undefined;
+
   let reason: StreamOutcome["error"];
   const onAbort = () => {
     reason = "cancelled";
@@ -274,10 +330,12 @@ export async function streamLocalChat(
   };
   signal?.addEventListener("abort", onAbort);
   if (signal?.aborted) onAbort();
+
   const hard = setTimeout(() => {
     reason = "timeout";
     controller.abort();
   }, LOCAL_HARD_CAP_MS);
+
   let idle: ReturnType<typeof setTimeout> | undefined;
   const bumpIdle = () => {
     if (idle) clearTimeout(idle);
@@ -286,21 +344,37 @@ export async function streamLocalChat(
       controller.abort();
     }, LOCAL_IDLE_TIMEOUT_MS);
   };
+
   let text = "";
   let tokens = 0;
+
   try {
+    setStatus({ phase: "connecting", localThinking: false });
     bumpIdle();
+
     const res = await fetch(`${url}/v1/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       signal: controller.signal,
       body: JSON.stringify({ ...body, stream: true, cache_prompt: true }),
     });
-    if (!res.ok || !res.body)
-      return { ok: false, text, tokens, elapsedMs: Date.now() - started, error: "http", status: res.status };
+
+    if (!res.ok || !res.body) {
+      return {
+        ok: false,
+        text,
+        tokens,
+        elapsedMs: Date.now() - started,
+        error: "http",
+        status: res.status,
+      };
+    }
+
+    setStatus({ phase: "processing_prompt", localThinking: false });
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
+
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -314,9 +388,27 @@ export async function streamLocalChat(
         const data = line.slice(5).trim();
         if (!data || data === "[DONE]") continue;
         try {
-          const chunk = JSON.parse(data) as { choices?: Array<{ delta?: { content?: string | null } }> };
+          const chunk = JSON.parse(data) as {
+            choices?: Array<{ delta?: { content?: string | null } }>;
+            timings?: {
+              prompt_ms?: number;
+              prompt_n?: number;
+              cache_n?: number;
+            };
+          };
+
+          if (chunk.timings) {
+            promptMs = chunk.timings.prompt_ms;
+            promptTokens = chunk.timings.prompt_n;
+            cacheTokens = chunk.timings.cache_n;
+          }
+
           const delta = chunk.choices?.[0]?.delta?.content;
           if (typeof delta === "string" && delta.length) {
+            if (timeToFirstTokenMs === undefined) {
+              timeToFirstTokenMs = Date.now() - started;
+              setStatus({ phase: "generating", localThinking: true });
+            }
             text += delta;
             tokens += 1;
             onToken?.(tokens);
@@ -326,7 +418,17 @@ export async function streamLocalChat(
         }
       }
     }
-    return { ok: true, text, tokens, elapsedMs: Date.now() - started };
+
+    return {
+      ok: true,
+      text,
+      tokens,
+      elapsedMs: Date.now() - started,
+      timeToFirstTokenMs,
+      promptMs,
+      promptTokens,
+      cacheTokens,
+    };
   } catch {
     return {
       ok: false,
@@ -339,6 +441,7 @@ export async function streamLocalChat(
     clearTimeout(hard);
     if (idle) clearTimeout(idle);
     signal?.removeEventListener("abort", onAbort);
+    setStatus({ phase: "idle", localThinking: false });
   }
 }
 
@@ -348,20 +451,24 @@ async function localOnce(
   request: AIRequest,
   reminder: boolean,
   signal?: AbortSignal,
-): Promise<{ result: AIProviderResult; tokens: number; elapsedMs: number }> {
+): Promise<{ result: AIProviderResult; tokens: number; elapsedMs: number; metrics?: Partial<StreamOutcome> }> {
   const targetId = request.targetId ?? "desktop";
   const extra = reminder ? estimateTokens(REMINDER) : 0;
   const context = request.context ?? [];
   const prompt =
     fitLocalPrompt(request.userRequest, targetId, context, extra) ??
     fitLocalPrompt(request.userRequest, targetId, shortenContext(context), extra);
+
   if (!prompt) return { result: fail("invalid_response", TOO_LARGE_MESSAGE), tokens: 0, elapsedMs: 0 };
+
   const messages = stripImageParts([
     { role: "system", content: LOCAL_SYSTEM },
     { role: "user", content: prompt },
     ...(reminder ? [{ role: "user", content: REMINDER }] : []),
   ]);
-  setStatus({ localTokens: 0 });
+
+  setStatus({ localTokens: 0, localThinking: false });
+
   const out = await streamLocalChat(
     {
       model: "qwen",
@@ -371,28 +478,43 @@ async function localOnce(
       chat_template_kwargs: { enable_thinking: false },
       response_format: {
         type: "json_schema",
-        json_schema: { name: "out", strict: true, schema: PLAN_JSON_SCHEMA },
+        json_schema: { name: "task_plan", strict: true, schema: PLAN_JSON_SCHEMA },
       },
     },
     signal,
     (n) => setStatus({ localTokens: n }),
   );
-  const meta = { tokens: out.tokens, elapsedMs: out.elapsedMs };
+
+  const meta = {
+    tokens: out.tokens,
+    elapsedMs: out.elapsedMs,
+    metrics: {
+      timeToFirstTokenMs: out.timeToFirstTokenMs,
+      promptMs: out.promptMs,
+      promptTokens: out.promptTokens,
+      cacheTokens: out.cacheTokens,
+    },
+  };
+
   if (!out.ok) {
     if (out.error === "cancelled") return { result: fail("unknown", "Cancelled"), ...meta };
     if (out.error === "idle")
-      return { result: fail("timeout", "Local model stopped responding (no new text for 90 seconds)", true), ...meta };
+      return {
+        result: fail("timeout", "Local model stopped responding (no new text for 90 seconds)", true),
+        ...meta,
+      };
     if (out.error === "timeout")
       return { result: fail("timeout", "Local model took longer than 15 minutes", true), ...meta };
     if (out.error === "http")
       return { result: fail("network_error", `Local model error (HTTP ${out.status})`, true), ...meta };
     return { result: fail("network_error", LOCAL_BLOCKED_MESSAGE, true), ...meta };
   }
+
   const content = stripThinking(out.text);
   if (!content) return { result: fail("invalid_response", "Local model returned an empty answer"), ...meta };
+
   try {
     const m = content.match(/\{[\s\S]*\}/);
-    // Same Zod validation as Gemini plans; the store then runs normalizeProviderPlan + validateAction.
     return { result: normalizeProviderResponse(JSON.parse(m ? m[0] : content)), ...meta };
   } catch (e) {
     return {
@@ -402,124 +524,115 @@ async function localOnce(
   }
 }
 
+/**
+ * Execute a local Qwen planning call with single in-flight queuing and task deduplication.
+ */
 export async function callLocal(
   request: AIRequest,
   signal?: AbortSignal,
   fallbackReason?: string,
 ): Promise<AIProviderResult> {
-  return enqueueLocal(async () => {
+  const taskId = request.taskId;
+
+  // Deduplicate concurrent planning calls for the same task
+  if (taskId) {
+    const existing = inFlightPlanning.get(taskId);
+    if (existing) return existing;
+  }
+
+  const taskPromise = enqueueLocal(async () => {
     if (isUserAbort(signal)) return fail("unknown", "Cancelled");
-    setStatus({ localThinking: true, localTokens: 0 });
+
     try {
       let a = await localOnce(request, false, signal);
       let tokens = a.tokens;
       let ms = a.elapsedMs;
-      if (!a.result.ok && a.result.code === "invalid_response" && a.result.message !== TOO_LARGE_MESSAGE && !isUserAbort(signal)) {
+
+      // Narrowly scoped single repair attempt only when response was invalid JSON
+      if (
+        !a.result.ok &&
+        a.result.code === "invalid_response" &&
+        a.result.message !== TOO_LARGE_MESSAGE &&
+        !isUserAbort(signal)
+      ) {
         a = await localOnce(request, true, signal);
         tokens += a.tokens;
         ms += a.elapsedMs;
       }
+
       const r = a.result;
       record({
-        provider: "local",
         ok: r.ok,
         note: r.ok ? `${r.steps.length}-step plan` : r.message,
         latencyMs: ms,
         outputTokens: tokens,
         tokensPerSec: ms > 0 ? Math.round((tokens / (ms / 1000)) * 10) / 10 : 0,
+        timeToFirstTokenMs: a.metrics?.timeToFirstTokenMs,
+        promptMs: a.metrics?.promptMs,
+        promptTokens: a.metrics?.promptTokens,
+        cacheTokens: a.metrics?.cacheTokens,
         ...(fallbackReason ? { fallbackReason } : {}),
       });
+
       return r;
     } finally {
-      setStatus({ localThinking: false });
+      setStatus({ localThinking: false, phase: "idle" });
+      if (taskId) inFlightPlanning.delete(taskId);
     }
   });
+
+  if (taskId) inFlightPlanning.set(taskId, taskPromise);
+  return taskPromise;
 }
 
+/** Legacy provider adapter call: routes directly to local Qwen. */
 export async function callGemini(request: AIRequest): Promise<AIProviderResult> {
-  const started = Date.now();
-  const gemini = new GeminiProvider();
-  let r = await gemini.getNextStep(request);
-  if (!r.ok && r.code === "invalid_response") r = await gemini.getNextStep(request); // one retry
-  const latencyMs = Date.now() - started;
-  if (!r.ok || r.steps.length === 0) {
-    const message = r.ok ? "Gemini returned an empty plan" : r.message;
-    record({ provider: "gemini", ok: false, note: message, latencyMs });
-    return r.ok ? fail("invalid_response", message) : r;
-  }
-  record({ provider: "gemini", ok: true, note: `${r.steps.length}-step plan`, latencyMs });
-  return r;
+  return callLocal(request);
 }
 
-/** Offline message that says why Gemini was skipped and why the local model failed. */
-export function offlineDetail(geminiError: string | null, localMessage: string): string {
-  let geminiPart: string;
-  if (geminiError) geminiPart = `Gemini failed: ${geminiError.slice(0, 200)}`;
-  else {
-    const secs = Math.max(0, Math.ceil((status.geminiDownUntil - Date.now()) / 1000));
-    geminiPart = `Gemini is paused for ${secs}s after an earlier failure${
-      status.lastGeminiError ? ` (${status.lastGeminiError.slice(0, 160)})` : ""
-    }. Press "Retry Gemini now" in Settings to try it again`;
-  }
-  return `${OFFLINE_MESSAGE} ${geminiPart}. Local model: ${localMessage}`;
-}
-
-async function viaLocalOrOffline(request: AIRequest, geminiError: string | null, signal?: AbortSignal) {
+/**
+ * The single entry point for every AI planning call.
+ * Uses local Qwen exclusively. Never calls Gemini or Lovable AI Gateway.
+ */
+export async function runWithFallback(
+  request: AIRequest,
+  signal?: AbortSignal,
+): Promise<AIProviderResult> {
   const health = await checkLocalHealth();
   if (!health.ok) {
     switchTo("offline");
     return fail(
       "network_error",
-      geminiError === null && getConfig().mode === "local"
-        ? `Local model is offline: ${health.message}`
-        : offlineDetail(geminiError, health.message),
+      `Local model is offline: ${health.message}. Start llama-server on port 8081.`,
+      true,
     );
   }
-  switchTo(
-    "local",
-    geminiError ? `Gemini unavailable (${geminiError.slice(0, 80)}), switched to local model` : undefined,
-  );
-  const reason =
-    geminiError ?? (getConfig().mode === "local" ? undefined : "Gemini cooling down after an earlier failure");
-  return callLocal(request, signal, reason);
-}
 
-/** The single entry point for every AI planning call. */
-export async function runWithFallback(request: AIRequest, signal?: AbortSignal): Promise<AIProviderResult> {
-  const { mode } = getConfig();
-  if (mode === "local") return viaLocalOrOffline(request, null, signal);
-  if (mode === "auto" && isGeminiCoolingDown()) return viaLocalOrOffline(request, null, signal);
-
-  const r = await callGemini(request);
-  if (r.ok) {
-    setStatus({ geminiDownUntil: 0, lastGeminiError: "" });
-    switchTo("gemini");
-    return r;
-  }
-  if (mode === "gemini" || isUserAbort(signal)) return r;
-  setStatus({ geminiDownUntil: Date.now() + cooldownFor(r.message), lastGeminiError: r.message });
-  return viaLocalOrOffline(request, r.message, signal);
+  switchTo("local");
+  return callLocal(request, signal);
 }
 
 /** Screen checks need vision, which the local text model doesn't have. Local-only never sends a screen. */
 export function shouldSkipGeminiCheck(): boolean {
-  const { mode } = getConfig();
-  return mode === "local" || (mode === "auto" && isGeminiCoolingDown());
-}
-export function noteGeminiQuotaFromCheck() {
-  if (getConfig().mode === "auto") setStatus({ geminiDownUntil: Date.now() + GEMINI_COOLDOWN_MS });
+  return true;
 }
 
-/** Provider adapter used by the task runner: Gemini goes through the fallback layer. */
+export function noteGeminiQuotaFromCheck() {
+  // Local model is text-only; quota from check is not applicable
+}
+
+/**
+ * Provider adapter used by the task runner:
+ * Always delegates to local Qwen.
+ */
 export function routedProvider(
-  provider: Provider,
-  profile?: AccountProfile,
+  _provider: Provider,
+  _profile?: AccountProfile,
   signal?: AbortSignal,
 ): ProviderAdapter {
-  if (provider.type !== "gemini") return createAIProvider(provider, profile);
   return {
-    name: "Gemini (auto fallback)",
-    type: "gemini",
+    name: "Local Qwen",
+    type: "custom",
     getNextStep: (req) => runWithFallback(req, signal),
   };
 }
@@ -551,15 +664,14 @@ export const DIAGNOSTIC_HINTS: Record<Exclude<DiagnosticFailure, null>, string> 
 
 export async function runLocalDiagnostics(): Promise<DiagnosticsReport> {
   const url = trimBase(getConfig().localBaseUrl);
-  const t0 = Date.now();
   const health = await checkLocalHealth(true);
-  const healthLatency = Date.now() - t0;
   const report = (failure: DiagnosticFailure, chat?: DiagnosticsReport["chat"]): DiagnosticsReport => ({
-    health: { ok: health.ok, latencyMs: healthLatency, message: health.message },
+    health: { ok: health.ok, latencyMs: health.latencyMs, message: health.message },
     ...(chat ? { chat } : {}),
     failure,
     hint: failure ? DIAGNOSTIC_HINTS[failure] : "Local model is working.",
   });
+
   if (!health.ok) {
     if (health.message.includes("2 seconds")) return report("timeout");
     if (health.message.startsWith("Local model not ready")) return report("bad_response");
@@ -571,6 +683,7 @@ export async function runLocalDiagnostics(): Promise<DiagnosticsReport> {
       return report("server_not_running");
     }
   }
+
   const out = await enqueueLocal(() =>
     streamLocalChat({
       model: "qwen",
@@ -580,6 +693,7 @@ export async function runLocalDiagnostics(): Promise<DiagnosticsReport> {
       chat_template_kwargs: { enable_thinking: false },
     }),
   );
+
   const chat = {
     ok: out.ok && stripThinking(out.text).length > 0,
     latencyMs: out.elapsedMs,
@@ -587,6 +701,7 @@ export async function runLocalDiagnostics(): Promise<DiagnosticsReport> {
     tokensPerSec: out.elapsedMs > 0 ? Math.round((out.tokens / (out.elapsedMs / 1000)) * 10) / 10 : 0,
     reply: stripThinking(out.text).slice(0, 40),
   };
+
   if (chat.ok) return report(null, chat);
   if (out.error === "idle" || out.error === "timeout") return report("timeout", chat);
   if (out.error === "network") return report("cors_or_browser_block", chat);
@@ -598,4 +713,5 @@ export function __resetAiStatus() {
   status = initialStatus();
   healthCache = null;
   localQueue = Promise.resolve();
+  inFlightPlanning.clear();
 }

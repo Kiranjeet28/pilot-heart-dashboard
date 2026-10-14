@@ -37,10 +37,9 @@ function stubGatewayFetch() {
     vi.fn(async (input: RequestInfo | URL) => {
       const url =
         typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-      if (url.includes("ai.gateway.lovable.dev")) {
-        return new Response(sseFor(gatewayState.payload), {
-          status: 200,
-          headers: { "content-type": "text/event-stream" },
+      if (url.includes("/chat/completions") || url.includes("ai.gateway.lovable.dev")) {
+        return Response.json({
+          choices: [{ message: { content: JSON.stringify(gatewayState.payload) } }],
         });
       }
       return new Response(JSON.stringify({ message: "not found" }), { status: 404 });
@@ -304,16 +303,34 @@ describe("secure AI task-plan endpoint", () => {
     expect(response.status).toBe(200);
   });
 
-  it("answers 500 with missing_credentials when no AI key is configured", async () => {
+  it("does not require or depend on remote Gemini or Lovable keys", async () => {
     delete process.env["LOVABLE_API_KEY"];
     delete process.env["GEMINI_API_KEY"];
+    stubGatewayFetch();
     const response = await postPlan(
       { userRequest: "Open the README" },
       { origin: "http://localhost:3000" },
     );
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(200);
     const json = await response.json();
-    expect(json.code).toBe("missing_credentials");
+    expect(json.ok).toBe(true);
+  });
+
+  it("returns 502 with clear local server error when llama-server is unreachable", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("Failed to fetch");
+      }),
+    );
+    const response = await postPlan(
+      { userRequest: "Open the README" },
+      { origin: "http://localhost:3000" },
+    );
+    expect(response.status).toBe(502);
+    const json = await response.json();
+    expect(json.code).toBe("local_model_unavailable");
+    expect(json.message).toContain("llama-server is running on port 8081");
   });
 
   it("does not expose browser secrets in frontend source", () => {

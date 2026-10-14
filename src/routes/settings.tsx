@@ -103,7 +103,7 @@ function SettingsPage() {
             <span>Check the screen after each step</span>
             <span className="text-xs font-normal text-muted-foreground">
               {mode === "real_local"
-                ? "After each real step, a screenshot is sent to Google Gemini to check it worked. If not, the remaining steps are adjusted — only with actions you already approved. Screenshots are never saved."
+                ? "The local Qwen model is text-only. Screen checks are safely skipped as unverified without sending screenshots to external services. If replanning is needed, local Qwen adjusts only actions you already approved."
                 : "Demo mode shows simulated checks only. Nothing is sent to the AI."}
             </span>
           </Label>

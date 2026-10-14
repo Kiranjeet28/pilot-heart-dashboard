@@ -103,21 +103,20 @@ Invoke-RestMethod http://127.0.0.1:8765/health
 Stop behaviour: press **Stop** (or the header **Emergency Stop**) while the test runs — remaining steps are not
 sent, and the worker answers `423 worker_stopped` until the emergency stop is reset.
 
-## AI task planning (Gemini, Module 3)
+## AI task planning (Local Qwen, Module 3)
 
 Task planning calls `POST /api/tasks/plan` (registered in `src/routes/api/tasks/plan.ts` →
-`src/lib/server/task-plan.ts`).
+`src/lib/server/task-plan.ts`) or connects directly from the browser to local Qwen.
 
-- Planning runs through the built-in Lovable AI gateway; no provider API key is required
-  (`LOVABLE_API_KEY` is provisioned automatically, server-side only). Optionally set
-  `GEMINI_MODEL` to override the planning model (e.g. `google/gemini-2.5-flash`). See
-  `.env.example`.
+- Planning runs exclusively through a local `llama-server` instance serving model alias `qwen`
+  at `http://127.0.0.1:8081`. Remote planning APIs (Google Gemini, Lovable AI Gateway) are not
+  used and require no API keys.
 - Security: the route accepts only (a) same-origin browser requests that positively prove it —
   matching `Origin`/`Referer` (or `Sec-Fetch-Site: same-origin` plus a matching header) — or
   (b) internal clients presenting `Authorization: Bearer <DESKTOPPILOT_SERVER_TOKEN>`.
   Requests without origin evidence are rejected; bodies are capped at 64 KB and limited to
   30 planning requests per origin per minute.
-- The server prompt pins the selected desktop target ID, and both the server and the client
+- The planner prompt pins the selected desktop target ID, and both the server and client
   planner (`normalizeProviderPlan`) reject steps that target another desktop, use a
   non-allowlisted action, exceed 12 steps, or use `text_match` verification without
   `expectedText`. Schemas: `worker_ok` and `screen_capture` always; `clipboard` for copy steps.
@@ -127,12 +126,13 @@ Task planning calls `POST /api/tasks/plan` (registered in `src/routes/api/tasks/
   execution continues without retry. Only genuine failures trigger the bounded 2-retry loop;
   tasks also honor a global 10-minute deadline.
 
-### Acceptance test (real Gemini + real worker)
+### Acceptance test (real local Qwen + real worker)
 
-1. Set `GEMINI_API_KEY`, start and pair the worker (sections 2–3 above), keep the dashboard on
-   **REAL LOCAL** with the target's interaction mode set to *assisted* or *autonomous*.
-2. Create a task such as "Open Notepad and type DesktopPilot test 123" on the target, and start it.
-3. Expected: a Gemini plan appears, steps run one at a time on the real desktop with approval
+1. Start `llama-server` with model alias `qwen` on `http://127.0.0.1:8081`.
+2. Start and pair the worker (sections 2–3 above), keep the dashboard on **REAL LOCAL** with
+   the target's interaction mode set to *assisted* or *autonomous*.
+3. Create a task such as "Open Notepad and type DesktopPilot test 123" on the target, and start it.
+4. Expected: a local Qwen plan appears, steps run one at a time on the real desktop with approval
    prompts for input actions, and the task ends `completed` only if every verification passed
    (or was honestly recorded as unverified).
 
@@ -166,20 +166,18 @@ See the detailed table in [`worker/visual-agent/README.md`](worker/visual-agent/
 | `423 failsafe_triggered` | Mouse hit a screen corner; reset the Emergency Stop |
 | Clicks land wrong | Use the main display (multi-monitor/DPI not supported yet) |
 
-## Module 3: Gemini-backed task orchestration
+## Module 3: Local Qwen task planning
 
-DesktopPilot keeps the AI provider adapter separate from the desktop worker. Gemini is the default provider, and the API key is read only on the trusted local backend; the browser never gets a private key. The dashboard calls `/api/tasks/plan`, and the server uses the official Google GenAI SDK to call Gemini before returning a bounded, schema-validated plan. The task runner then validates every action, applies target approval policy, executes through the paired worker, captures post-action observations, and requires verification before advancing.
+DesktopPilot keeps the AI planning layer separate from the desktop worker. Planning uses the local `llama-server` (model alias `qwen`) listening on `http://127.0.0.1:8081`. The dashboard routes planning through local Qwen directly or via `POST /api/tasks/plan`, returning bounded, schema-validated plans. The task runner then validates every action, applies target approval policy, executes through the paired worker, captures post-action observations, and requires verification before advancing.
 
-This project keeps the adapter logic in `src/lib/ai/provider.ts` and the task lifecycle helpers in `src/lib/tasks/*` so the worker remains allowlisted and the planner can be swapped without changing the worker contract. Demo mode uses the mock provider and worker through the same orchestration path; OpenAI, Anthropic, and custom providers remain explicitly unsupported.
+This project keeps the adapter logic in `src/lib/ai/provider.ts` and the task lifecycle helpers in `src/lib/tasks/*` so the worker remains allowlisted and the planner can be swapped without changing the worker contract. Demo mode uses the mock provider and worker through the same orchestration path. Remote planning services (Gemini, OpenAI, Anthropic) are not used for planning.
 
 Backend configuration example:
 
 ```sh
-export GEMINI_API_KEY="replace_with_your_key"
-export GEMINI_MODEL="gemini-2.5-flash"
+export LOCAL_LLM_BASE_URL="http://127.0.0.1:8081"
+export LOCAL_LLM_MODEL="qwen"
 ```
-
-For local server configuration, copy `.env.example` to `.env` and provide a real key only in the trusted server environment. Never use `VITE_GEMINI_API_KEY`, commit `.env`, or place credentials in browser storage.
 
 ## Project layout
 

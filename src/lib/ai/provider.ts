@@ -174,9 +174,9 @@ function extractResponseMessage(data: unknown): string {
   return "Unexpected provider response";
 }
 
-export class GeminiProvider implements ProviderAdapter {
-  readonly name = "Gemini";
-  readonly type = "gemini" as const;
+export class LocalQwenProvider implements ProviderAdapter {
+  readonly name = "Local Qwen";
+  readonly type = "custom" as const;
 
   async getNextStep(request: AIRequest): Promise<AIProviderResult> {
     try {
@@ -191,7 +191,7 @@ export class GeminiProvider implements ProviderAdapter {
           profileId: request.profile?.id ?? "",
           context: request.context ?? [],
           modelOverride: request.modelOverride ?? request.provider.model,
-          timeoutMs: request.timeoutMs ?? 30000,
+          timeoutMs: request.timeoutMs ?? 60000,
         }),
       });
 
@@ -215,18 +215,21 @@ export class GeminiProvider implements ProviderAdapter {
       } catch (error) {
         return makeProviderFailure(
           "invalid_response",
-          error instanceof Error ? error.message : "Malformed Gemini response",
+          error instanceof Error ? error.message : "Malformed plan response",
           false,
         );
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Gemini request failed";
+      const message = error instanceof Error ? error.message : "Planning request failed";
       const lower = message.toLowerCase();
       if (lower.includes("timeout")) return makeProviderFailure("timeout", message, true);
       return makeProviderFailure("network_error", message, true);
     }
   }
 }
+
+/** Backwards-compatible export for any existing tests/imports. */
+export const GeminiProvider = LocalQwenProvider;
 
 export class MockAIProvider implements ProviderAdapter {
   readonly name = "Mock AI";
@@ -264,7 +267,7 @@ class UnsupportedProvider implements ProviderAdapter {
     return {
       ok: false,
       code: "unknown",
-      message: `${this.name} is not implemented. Select Gemini or enable demo mode.`,
+      message: `${this.name} is not implemented. DesktopPilot uses local Qwen exclusively.`,
       retryable: false,
     };
   }
@@ -275,6 +278,5 @@ export function createAIProvider(
   profile?: AccountProfile,
   overrides?: { apiKey?: string; timeoutMs?: number },
 ): ProviderAdapter {
-  if (provider.type === "gemini") return new GeminiProvider();
-  return new UnsupportedProvider(provider.displayName);
+  return new LocalQwenProvider();
 }

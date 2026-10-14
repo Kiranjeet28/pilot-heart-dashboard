@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { normalizeProviderResponse, type ProviderResult } from "@/lib/ai/provider";
-import { PLAN_JSON_SCHEMA, buildPlanPrompt as buildPrompt } from "@/lib/ai/plan-prompt";
+import { PLAN_JSON_SCHEMA, LOCAL_SYSTEM, buildPlanPrompt as buildPrompt } from "@/lib/ai/plan-prompt";
 
 export interface TaskPlanRequestInput {
   taskId?: string | undefined;
@@ -21,7 +21,7 @@ const taskPlanRequestSchema = z.object({
   profileId: z.string().min(1).max(128).optional(),
   context: z.array(z.string().min(1).max(500)).max(12).optional().default([]),
   modelOverride: z.string().min(1).max(128).optional(),
-  timeoutMs: z.number().int().min(1000).max(120000).optional().default(30000),
+  timeoutMs: z.number().int().min(1000).max(120000).optional().default(60000),
 });
 
 function getServerToken(): string | null {
@@ -92,17 +92,19 @@ export function isRateLimited(
   return false;
 }
 
-// ---------- Lovable AI Gateway (server-side planning transport) ----------
-
-const GATEWAY_CHAT_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
-const LOVABLE_AIG_RUN_ID_HEADER = "X-Lovable-AIG-Run-ID";
-const MAX_PLAN_TOKENS = 800;
-
+function extractJsonObject(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "{}";
+  const block = trimmed
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/, "")
+    .trim();
+  const match = block.match(/\{[\s\S]*\}/);
+  return match ? match[0] : block;
+}
 
 /**
- * Gemini's native responseSchema is an OpenAPI subset that rejects
- * `additionalProperties`. Strip it for the direct call; strictness is still
- * enforced afterwards by server-side and client-side plan validation.
+ * Strip additionalProperties from JSON schemas if needed.
  */
 export function toGeminiResponseSchema(schema: unknown): unknown {
   if (Array.isArray(schema)) return schema.map(toGeminiResponseSchema);
@@ -117,240 +119,36 @@ export function toGeminiResponseSchema(schema: unknown): unknown {
   return schema;
 }
 
-const GEMINI_RESPONSE_SCHEMA = toGeminiResponseSchema(PLAN_JSON_SCHEMA);
+/**
+ * Local-only task planning.
+ * Routes directly to local llama-server running model alias "qwen".
+ * Never calls Gemini or Lovable AI Gateway.
+ */
+export async function generateTaskPlan(input: TaskPlanRequestInput): Promise<ProviderResult> {
+  const rawBase = process.env.LOCAL_LLM_BASE_URL ?? "http://127.0.0.1:8081";
+  const baseUrl = rawBase.replace(/\/+$/, "");
+  const endpoint = baseUrl.endsWith("/v1")
+    ? `${baseUrl}/chat/completions`
+    : `${baseUrl}/v1/chat/completions`;
 
+  const model = process.env.LOCAL_LLM_MODEL ?? "qwen";
+  const timeoutMs = input.timeoutMs ?? 60000;
 
-function resolveGatewayModel(model?: string): string {
-  const requested = (model ?? process.env["GEMINI_MODEL"] ?? "gemini-2.5-flash").trim();
-  if (requested.includes("/")) return requested;
-  if (requested.startsWith("gemini")) return `google/${requested}`;
-  return requested;
-}
-
-interface GatewayRequestError extends Error {
-  code: string;
-  status?: number;
-}
-
-function gatewayError(code: string, message: string, status?: number): GatewayRequestError {
-  return Object.assign(new Error(message), { code, ...(status !== undefined ? { status } : {}) });
-}
-
-function gatewayCodeFor(status: number): string {
-  if (status === 401) return "auth_failed";
-  if (status === 402) return "insufficient_credits";
-  if (status === 403) return "forbidden";
-  if (status === 404) return "unavailable_model";
-  if (status === 429) return "rate_limit";
-  if (status >= 500) return "network_error";
-  return "provider_error";
-}
-
-async function extractGatewayErrorMessage(res: Response): Promise<string> {
-  try {
-    const data = (await res.json()) as { error?: unknown; message?: string };
-    if (typeof data.message === "string" && data.message) return data.message;
-    if (data.error && typeof data.error === "object") {
-      const message = (data.error as { message?: unknown }).message;
-      if (typeof message === "string" && message) return message;
-    }
-  } catch {
-    /* fall through to a generic message */
-  }
-  return `AI gateway error (HTTP ${res.status})`;
-}
-
-/** Run-ID wrapper: reuse gateway-issued run ids on follow-ups; never mint one. */
-function createRunIdFetch() {
-  let runId: string | undefined;
-  return {
-    getRunId: () => runId,
-    fetch: async (input: RequestInfo | URL, init?: RequestInit) => {
-      const headers = new Headers(init?.headers);
-      if (runId && !headers.has(LOVABLE_AIG_RUN_ID_HEADER))
-        headers.set(LOVABLE_AIG_RUN_ID_HEADER, runId);
-      const response = await fetch(input, { ...init, headers });
-      runId ??= response.headers.get(LOVABLE_AIG_RUN_ID_HEADER)?.trim() || undefined;
-      return response;
-    },
-  };
-}
-
-/** Accumulate the streamed chat-completions deltas into the full text content. */
-async function consumeSsePlan(response: Response): Promise<string> {
-  const body = response.body;
-  if (!body) return "";
-  const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let content = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let separator: number;
-    while ((separator = buffer.indexOf("\n\n")) !== -1) {
-      const event = buffer.slice(0, separator);
-      buffer = buffer.slice(separator + 2);
-      for (const line of event.split("\n")) {
-        if (!line.startsWith("data:")) continue;
-        const data = line.slice(5).trim();
-        if (!data || data === "[DONE]") continue;
-        try {
-          const chunk = JSON.parse(data) as { choices?: Array<{ delta?: { content?: string } }> };
-          const delta = chunk.choices?.[0]?.delta?.content;
-          if (typeof delta === "string") content += delta;
-        } catch {
-          /* ignore malformed frames */
-        }
-      }
-    }
-  }
-  return content;
-}
-
-function extractJsonObject(raw: string): string {
-  const trimmed = raw.trim();
-  if (!trimmed) return "{}";
-  const block = trimmed
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/, "")
-    .trim();
-  const match = block.match(/\{[\s\S]*\}/);
-  return match ? match[0] : cleanedFallback(block);
-}
-
-function cleanedFallback(raw: string): string {
-  const normalized = raw.trim();
-  if (!normalized) return "{}";
-  if (normalized.startsWith("{") || normalized.startsWith("[")) return normalized;
-  return JSON.stringify({ plan: [normalized], summary: normalized.slice(0, 200) });
-}
-
-// ---------- Direct Gemini fallback (local runs without the Lovable gateway) ----------
-
-const GEMINI_DIRECT_URL = "https://generativelanguage.googleapis.com/v1beta/models";
-
-function resolveDirectGeminiModel(model?: string): string {
-  const requested = (model ?? process.env["GEMINI_MODEL"] ?? "gemini-2.5-flash").trim();
-  if (requested.includes("/")) return requested.split("/").pop() ?? requested;
-  return requested;
-}
-
-/** Call Gemini directly with the user's own key (GEMINI_API_KEY) — used for local runs. */
-async function generateDirectGeminiPlan(input: TaskPlanRequestInput): Promise<ProviderResult> {
-  const apiKey = process.env["GEMINI_API_KEY"]?.trim();
-  if (!apiKey) {
-    throw gatewayError(
-      "missing_credentials",
-      "No AI key configured. Set GEMINI_API_KEY in your local .env (the built-in LOVABLE_API_KEY is only available in the Lovable preview).",
-    );
-  }
-  const model = resolveDirectGeminiModel(input.modelOverride);
-  const timeoutMs = input.timeoutMs ?? 30000;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
-    const response = await fetch(
-      `${GEMINI_DIRECT_URL}/${model}:generateContent?key=${encodeURIComponent(apiKey)}`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          systemInstruction: {
-            parts: [
-              {
-                text: "You plan safe desktop automation steps for DesktopPilot. Respond only with JSON matching this JSON schema (at most 12 steps): " +
-                  JSON.stringify(GEMINI_RESPONSE_SCHEMA),
-              },
-            ],
-          },
-          contents: [{ role: "user", parts: [{ text: buildPrompt(input) }] }],
-          generationConfig: {
-            temperature: 0.2,
-            // Gemini 2.5 "thinking" counts against this budget and truncated plans.
-            maxOutputTokens: 4096,
-            thinkingConfig: { thinkingBudget: 0 },
-            responseMimeType: "application/json",
-          },
-        }),
-        signal: controller.signal,
-      },
-    );
-
-    if (!response.ok) {
-      const message = await extractGatewayErrorMessage(response);
-      throw gatewayError(gatewayCodeFor(response.status), message, response.status);
-    }
-
-    const data = (await response.json()) as {
-      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-    };
-    const rawText =
-      data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
-    if (!rawText.trim()) {
-      throw gatewayError("invalid_response", "Gemini returned an empty plan.", 502);
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(extractJsonObject(rawText));
-    } catch {
-      throw gatewayError(
-        "invalid_response",
-        "The AI returned a response that was not valid JSON.",
-        502,
-      );
-    }
-    try {
-      return normalizeProviderResponse(parsed);
-    } catch (error) {
-      throw gatewayError(
-        "invalid_response",
-        error instanceof Error ? error.message : "Malformed AI response",
-        502,
-      );
-    }
-  } catch (error) {
-    if (error && typeof error === "object" && "code" in error) throw error;
-    if (controller.signal.aborted) {
-      throw gatewayError("timeout", "AI planning request timed out.", 504);
-    }
-    throw gatewayError(
-      "network_error",
-      error instanceof Error ? error.message : "AI planning request failed",
-      502,
-    );
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-export async function generateGeminiTaskPlan(input: TaskPlanRequestInput): Promise<ProviderResult> {
-  const apiKey = process.env["LOVABLE_API_KEY"]?.trim();
-  // A missing or placeholder gateway key means a local run: use the user's own
-  // Gemini key directly instead of the Lovable gateway.
-  if (!apiKey || apiKey === "your-key-here") {
-    return generateDirectGeminiPlan(input);
-  }
-  const model = resolveGatewayModel(input.modelOverride);
-  const timeoutMs = input.timeoutMs ?? 30000;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const { fetch: runIdFetch } = createRunIdFetch();
-    const response = await runIdFetch(GATEWAY_CHAT_URL, {
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${apiKey}`,
-        "Lovable-API-Key": apiKey,
-        "X-Lovable-AIG-SDK": "fetch",
+        "Content-Type": "application/json",
       },
       body: JSON.stringify({
         model,
-        stream: true,
-        max_tokens: MAX_PLAN_TOKENS,
-        ...(model.startsWith("google/") ? { temperature: 0.2 } : {}),
+        stream: false,
+        temperature: 0.2,
+        max_tokens: 700,
+        chat_template_kwargs: { enable_thinking: false },
         response_format: {
           type: "json_schema",
           json_schema: { name: "task_plan", strict: true, schema: PLAN_JSON_SCHEMA },
@@ -358,68 +156,96 @@ export async function generateGeminiTaskPlan(input: TaskPlanRequestInput): Promi
         messages: [
           {
             role: "system",
-            content:
-              "You plan safe desktop automation steps for DesktopPilot. Respond only with JSON matching this JSON schema (at most 12 steps): " +
-                  JSON.stringify(GEMINI_RESPONSE_SCHEMA),
+            content: LOCAL_SYSTEM,
           },
-          { role: "user", content: buildPrompt(input) },
+          {
+            role: "user",
+            content: buildPrompt(input),
+          },
         ],
       }),
       signal: controller.signal,
     });
 
     if (!response.ok) {
-      const message = await extractGatewayErrorMessage(response);
-      throw gatewayError(gatewayCodeFor(response.status), message, response.status);
+      const details = await response.text().catch(() => "");
+      throw Object.assign(
+        new Error(`Local Qwen server returned HTTP ${response.status}. ${details.slice(0, 300)}`),
+        {
+          code: "local_model_error",
+          status: 502,
+        },
+      );
     }
 
-    const rawText = await consumeSsePlan(response);
+    const data = (await response.json()) as {
+      choices?: Array<{
+        message?: {
+          content?: string | Array<{ text?: string }>;
+        };
+      }>;
+    };
+
+    const content = data.choices?.[0]?.message?.content;
+    const rawText =
+      typeof content === "string"
+        ? content
+        : Array.isArray(content)
+          ? content.map((part) => part.text ?? "").join("")
+          : "";
+
     if (!rawText.trim()) {
-      throw gatewayError("invalid_response", "The AI gateway returned an empty plan.", 502);
+      throw Object.assign(
+        new Error("Local Qwen returned an empty plan."),
+        { code: "invalid_response", status: 502 },
+      );
     }
+
     let parsed: unknown;
     try {
       parsed = JSON.parse(extractJsonObject(rawText));
     } catch {
-      throw gatewayError(
-        "invalid_response",
-        "The AI returned a response that was not valid JSON.",
-        502,
+      throw Object.assign(
+        new Error("Local Qwen did not return valid JSON."),
+        { code: "invalid_response", status: 502 },
       );
     }
+
     try {
       return normalizeProviderResponse(parsed);
     } catch (error) {
-      throw gatewayError(
-        "invalid_response",
-        error instanceof Error ? error.message : "Malformed AI response",
-        502,
+      throw Object.assign(
+        new Error(
+          error instanceof Error ? error.message : "Local Qwen returned an invalid plan.",
+        ),
+        { code: "invalid_response", status: 502 },
       );
     }
   } catch (error) {
     if (error && typeof error === "object" && "code" in error) {
-      // Local runs sometimes carry a stale/invalid gateway key in .env — fall
-      // back to the user's own Gemini key when the gateway rejects auth.
-      if (
-        (error as { code?: unknown }).code === "auth_failed" &&
-        process.env["GEMINI_API_KEY"]?.trim()
-      ) {
-        return generateDirectGeminiPlan(input);
-      }
       throw error;
     }
+
     if (controller.signal.aborted) {
-      throw gatewayError("timeout", "AI planning request timed out.", 504);
+      throw Object.assign(
+        new Error("Local Qwen planning request timed out."),
+        { code: "timeout", status: 504 },
+      );
     }
-    throw gatewayError(
-      "network_error",
-      error instanceof Error ? error.message : "AI planning request failed",
-      502,
+
+    throw Object.assign(
+      new Error(
+        `Cannot reach local Qwen at ${endpoint}. Check that llama-server is running on port 8081.`,
+      ),
+      { code: "local_model_unavailable", status: 502 },
     );
   } finally {
     clearTimeout(timer);
   }
 }
+
+/** Backwards-compatible export for any callers of generateGeminiTaskPlan. */
+export const generateGeminiTaskPlan = generateTaskPlan;
 
 export async function handleTaskPlanRequest(request: Request): Promise<Response> {
   if (request.method !== "POST") {
@@ -476,7 +302,7 @@ export async function handleTaskPlanRequest(request: Request): Promise<Response>
   }
 
   try {
-    const result = await generateGeminiTaskPlan(parsed.data);
+    const result = await generateTaskPlan(parsed.data);
     if (
       parsed.data.targetId &&
       result.steps.some((step) => step.action.targetId !== parsed.data.targetId)
@@ -501,10 +327,10 @@ export async function handleTaskPlanRequest(request: Request): Promise<Response>
     const status =
       typeof errorStatus === "number"
         ? errorStatus
-        : code === "missing_credentials"
-          ? 500
-          : code === "rate_limit"
-            ? 429
+        : code === "rate_limit"
+          ? 429
+          : code === "timeout"
+            ? 504
             : 502;
     return Response.json({ ok: false, code, message }, { status });
   }
