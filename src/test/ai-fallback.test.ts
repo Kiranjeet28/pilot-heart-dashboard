@@ -83,7 +83,8 @@ describe("runWithFallback", () => {
     gemini = () => Response.json({ message: "down" }, { status: 503 });
     localUp = false;
     const r = await runWithFallback(req);
-    expect(!r.ok && r.message).toBe(OFFLINE_MESSAGE);
+    expect(!r.ok && r.message).toContain(OFFLINE_MESSAGE);
+    expect(!r.ok && r.message).toContain("Gemini failed: ");
     expect(aiStatus.get().active).toBe("offline");
   });
 
