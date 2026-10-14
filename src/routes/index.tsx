@@ -62,13 +62,19 @@ function Dashboard() {
 
   const pauseAgent = () => {
     const running = tasks.filter((t) => ["queued", "planning", "running"].includes(t.status));
-    if (!running.length) return toast.info("Nothing is running right now.");
+    if (!running.length) {
+      toast.info("Nothing is running right now.");
+      return;
+    }
     running.forEach((t) => actions.pause(t.id));
     toast.success("Agent paused");
   };
   const resumeAgent = () => {
     const paused = tasks.filter((t) => t.status === "paused");
-    if (!paused.length) return toast.info("Nothing is paused.");
+    if (!paused.length) {
+      toast.info("Nothing is paused.");
+      return;
+    }
     const issue = paused.map((t) => actions.resume(t.id)).flat()[0];
     if (issue) toast.error(issue);
     else toast.success("Agent resumed");
