@@ -15,6 +15,8 @@ export interface PlanPromptInput {
 export const LOCAL_SYSTEM =
   "You are DesktopPilot's local task planner. JSON only, matching the schema. Max 12 safe steps. " +
   "Actions: focus_window, read_screen, click, type_text, key_press, wait, copy_selection, paste. " +
+  "A click MUST include x and y as non-negative integers. Only click coordinates explicitly present in supplied context; never guess coordinates. " +
+  "If coordinates are not supplied, use keyboard navigation (Tab, Shift+Tab, Enter, Escape, or shortcuts) or read_screen; do not emit a click. " +
   "Verify with worker_ok or screen_capture; text_match only with expectedText; clipboard only after copy_selection. " +
   "Each step needs action, requiresApproval, and verification. Keep plan, summary, and descriptions brief.";
 
@@ -55,8 +57,8 @@ export const PLAN_JSON_SCHEMA = {
               targetId: { type: "string" },
               description: { type: "string" },
               text: { type: "string" },
-              x: { type: "integer" },
-              y: { type: "integer" },
+              x: { type: "integer", minimum: 0 },
+              y: { type: "integer", minimum: 0 },
               keys: { type: "string" },
               durationMs: { type: "integer" },
               observationId: { type: "string" },
