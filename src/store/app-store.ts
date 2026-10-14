@@ -422,7 +422,10 @@ async function tick(id: string) {
             targetId: t.targetId,
             provider,
             profile,
-            context: t.lastVerifiedResult ? [t.lastVerifiedResult] : [],
+            context: [
+              ...(t.context ? [`Project context from the user: ${t.context.slice(0, 480)}`] : []),
+              ...(t.lastVerifiedResult ? [t.lastVerifiedResult] : []),
+            ],
           });
       if (getTask(id)?.status !== "planning" || state.emergencyStop) return;
       if (!planned.ok)
@@ -518,9 +521,10 @@ async function tick(id: string) {
     if (getTask(id)?.status !== "running") return; // paused/cancelled meanwhile
     if (!result.ok) {
       const cur = getTask(id)!;
-      if (cur.retries < 2) {
+      const maxR = cur.maxRetries ?? 2;
+      if (cur.retries < maxR) {
         patchTask(id, { retries: cur.retries + 1 });
-        log(id, "warning", `${result.message}. Retrying (${cur.retries + 1}/2)…`);
+        log(id, "warning", `${result.message}. Retrying (${cur.retries + 1}/${maxR})…`);
         return schedule(id);
       }
       return fail(id, `${result.message} after 2 retries`);
@@ -557,10 +561,11 @@ async function tick(id: string) {
         },
       });
       const cur = getTask(id)!;
-      if (cur.retries < 2) {
+      const maxR = cur.maxRetries ?? 2;
+      if (cur.retries < maxR) {
         patchTask(id, { retries: cur.retries + 1 });
         transition(id, "running");
-        log(id, "warning", `${verification.reason} Retrying (${cur.retries}/2)…`, sim);
+        log(id, "warning", `${verification.reason} Retrying (${cur.retries + 1}/${maxR})…`, sim);
         return schedule(id);
       }
       return fail(id, `${verification.reason} after 2 verification retries`);
@@ -623,7 +628,15 @@ export interface NewTaskInput {
   providerId: string;
   profileId: string;
   targetId: string;
+  /** Optional per-task limits (Prompt Workspace). Clamped to safe bounds. */
+  maxMinutes?: number;
+  maxRetries?: number;
+  /** Optional project context shown on the task detail page. */
+  context?: string;
 }
+
+export const clampMinutes = (m?: number) => Math.min(30, Math.max(1, Math.round(m ?? 10)));
+export const clampRetries = (r?: number) => Math.min(2, Math.max(0, Math.round(r ?? 2)));
 
 export const actions = {
   hydrate() {
@@ -689,10 +702,14 @@ export const actions = {
       const issues = actions.readiness(input);
       if (issues.length) return { ok: false, issues };
     }
+    const { maxMinutes, maxRetries, context, ...base } = input;
+    const ctx = context?.trim().slice(0, 2000);
     const task: Task = {
       id: uid("task"),
-      ...input,
+      ...base,
       description: input.description.trim(),
+      ...(ctx ? { context: ctx } : {}),
+      maxRetries: clampRetries(maxRetries),
       status: "draft",
       createdAt: Date.now(),
       progress: 0,
@@ -700,7 +717,7 @@ export const actions = {
       currentStep: 0,
       retries: 0,
       replans: 0,
-      deadlineAt: Date.now() + 10 * 60 * 1000,
+      deadlineAt: Date.now() + clampMinutes(maxMinutes) * 60 * 1000,
     };
     set((s) => ({ tasks: [task, ...s.tasks] }));
     log(task.id, "info", start ? "Task created" : "Draft saved", false);
@@ -779,6 +796,8 @@ export const actions = {
     return actions.createTask(
       {
         description: t.description,
+        ...(t.context ? { context: t.context } : {}),
+        ...(t.maxRetries !== undefined ? { maxRetries: t.maxRetries } : {}),
         providerId: t.providerId,
         profileId: t.profileId,
         targetId: t.targetId,

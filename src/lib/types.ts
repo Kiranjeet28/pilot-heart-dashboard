@@ -130,6 +130,10 @@ export interface Task {
   steps: PlannedStep[];
   currentStep: number;
   retries: number;
+  /** Retry limit per failed step (0-2, default 2). */
+  maxRetries?: number;
+  /** Optional project context entered in the Prompt Workspace. */
+  context?: string;
   replans?: number;
   /** Set once the user approves the plan before it starts; no per-step prompts after. */
   planApproved?: boolean;
