@@ -57,6 +57,8 @@ export interface ProviderLogEntry {
 export interface AiStatus {
   active: ActiveProvider;
   geminiDownUntil: number;
+  /** Why Gemini last failed (shown while it cools down). */
+  lastGeminiError: string;
   localThinking: boolean;
   /** Tokens streamed so far by the in-flight local call. */
   localTokens: number;
@@ -67,6 +69,7 @@ export interface AiStatus {
 const initialStatus = (): AiStatus => ({
   active: "gemini",
   geminiDownUntil: 0,
+  lastGeminiError: "",
   localThinking: false,
   localTokens: 0,
   log: [],
@@ -448,13 +451,28 @@ export async function callGemini(request: AIRequest): Promise<AIProviderResult> 
   return r;
 }
 
+/** Offline message that says why Gemini was skipped and why the local model failed. */
+export function offlineDetail(geminiError: string | null, localMessage: string): string {
+  let geminiPart: string;
+  if (geminiError) geminiPart = `Gemini failed: ${geminiError.slice(0, 200)}`;
+  else {
+    const secs = Math.max(0, Math.ceil((status.geminiDownUntil - Date.now()) / 1000));
+    geminiPart = `Gemini is paused for ${secs}s after an earlier failure${
+      status.lastGeminiError ? ` (${status.lastGeminiError.slice(0, 160)})` : ""
+    }. Press "Retry Gemini now" in Settings to try it again`;
+  }
+  return `${OFFLINE_MESSAGE} ${geminiPart}. Local model: ${localMessage}`;
+}
+
 async function viaLocalOrOffline(request: AIRequest, geminiError: string | null, signal?: AbortSignal) {
   const health = await checkLocalHealth();
   if (!health.ok) {
     switchTo("offline");
     return fail(
       "network_error",
-      geminiError === null && getConfig().mode === "local" ? `Local model is offline: ${health.message}` : OFFLINE_MESSAGE,
+      geminiError === null && getConfig().mode === "local"
+        ? `Local model is offline: ${health.message}`
+        : offlineDetail(geminiError, health.message),
     );
   }
   switchTo(
@@ -474,12 +492,12 @@ export async function runWithFallback(request: AIRequest, signal?: AbortSignal):
 
   const r = await callGemini(request);
   if (r.ok) {
-    setStatus({ geminiDownUntil: 0 });
+    setStatus({ geminiDownUntil: 0, lastGeminiError: "" });
     switchTo("gemini");
     return r;
   }
   if (mode === "gemini" || isUserAbort(signal)) return r;
-  setStatus({ geminiDownUntil: Date.now() + cooldownFor(r.message) });
+  setStatus({ geminiDownUntil: Date.now() + cooldownFor(r.message), lastGeminiError: r.message });
   return viaLocalOrOffline(request, r.message, signal);
 }
 
