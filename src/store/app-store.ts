@@ -413,14 +413,7 @@ async function tick(id: string) {
         sim,
       );
       transition(id, "planning");
-      log(
-        id,
-        "info",
-        sim
-          ? "Planning steps (demo planner — no AI provider call)"
-          : "Planning observation-only steps (real mode, no AI provider call)",
-        sim,
-      );
+      log(id, "info", sim ? "Preparing demo plan" : "Preparing real desktop plan", sim);
       return schedule(id);
     }
     if (t.status === "planning") {

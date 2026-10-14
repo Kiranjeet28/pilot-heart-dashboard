@@ -118,8 +118,9 @@ export function normalizeProviderPlan(
       supportedActions &&
       action.kind !== "read_screen" &&
       !supportedActions.includes(action.kind)
-    )
-      throw new Error(`Plan step ${index + 1} uses an unsupported worker action.`);
+    ) {
+      throw new Error(`Plan step ${index + 1} uses unsupported worker action "${action.kind}".`);
+    }
     if (step.verification?.kind === "text_match" && !step.verification.expectedText?.trim())
       throw new Error(`Plan step ${index + 1} uses text_match verification without expected text.`);
     if (target.interactionMode === "observe_only" && INPUT_ACTIONS.includes(action.kind))

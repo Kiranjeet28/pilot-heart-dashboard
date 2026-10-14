@@ -1,4 +1,4 @@
-// Shared, secret-free planning prompt + schema for DesktopPilot's local Qwen planner.
+﻿// Shared, secret-free planning prompt + schema for DesktopPilot's local Qwen planner.
 // Kept compact, stable and bounded for local llama-server context and prompt cache reuse.
 
 export interface PlanPromptInput {
@@ -10,11 +10,12 @@ export interface PlanPromptInput {
 /**
  * Static planning rules live here (not in the per-request user prompt) so llama.cpp
  * `cache_prompt` can reuse a stable prefix. Semantic constraints that the JSON schema
- * grammar cannot enforce — safety, target pinning, verification usage — stay explicit.
+ * grammar cannot enforce â€” safety, target pinning, verification usage â€” stay explicit.
  */
 export const LOCAL_SYSTEM =
   "You are DesktopPilot's local task planner. JSON only, matching the schema. Max 12 safe steps. " +
-  "Actions: focus_window, read_screen, click, type_text, key_press, wait, copy_selection, paste. " +
+  "Actions: read_screen, click, type_text, key_press, wait, copy_selection, paste. " +
+  "Never use focus_window; the real worker does not support it. " +
   "Verify with worker_ok or screen_capture; text_match only with expectedText; clipboard only after copy_selection. " +
   "Each step needs action, requiresApproval, and verification. Keep plan, summary, and descriptions brief.";
 
@@ -42,7 +43,6 @@ export const PLAN_JSON_SCHEMA = {
               kind: {
                 type: "string",
                 enum: [
-                  "focus_window",
                   "read_screen",
                   "click",
                   "type_text",
@@ -55,8 +55,8 @@ export const PLAN_JSON_SCHEMA = {
               targetId: { type: "string" },
               description: { type: "string" },
               text: { type: "string" },
-              x: { type: "integer" },
-              y: { type: "integer" },
+              x: { type: "integer", minimum: 0 },
+              y: { type: "integer", minimum: 0 },
               keys: { type: "string" },
               durationMs: { type: "integer" },
               observationId: { type: "string" },

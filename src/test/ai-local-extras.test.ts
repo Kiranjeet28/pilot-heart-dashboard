@@ -201,6 +201,12 @@ describe("5. one local request at a time", () => {
 });
 
 describe("6. validation", () => {
+  it("does not allow Qwen to plan unsupported focus_window actions", () => {
+    const kinds = PLAN_JSON_SCHEMA.properties.steps.items.properties.action.properties.kind.enum;
+
+    expect(kinds).not.toContain("focus_window");
+    expect(LOCAL_SYSTEM).toContain("Never use focus_window");
+  });
   it("retries once with a reminder, then reports the error", async () => {
     stubLocal(() => sse(['{"steps":"nope"}']));
     const r = await callLocal(req);
