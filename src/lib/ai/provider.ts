@@ -72,6 +72,14 @@ const actionSchema = z
     observationId: z.string().optional(),
     requiresApproval: z.boolean().optional(),
   })
+  .superRefine((action, ctx) => {
+    if (action.kind === "click" && (action.x == null || action.y == null)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "click requires x and y as non-negative integers; do not guess coordinates",
+      });
+    }
+  })
   .transform(({ requiresApproval: _requiresApproval, ...action }): ActionRequest => ({
     kind: action.kind,
     targetId: action.targetId,
