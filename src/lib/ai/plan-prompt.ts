@@ -6,8 +6,8 @@ export interface PlanPromptInput {
   context?: string[] | undefined;
 }
 
-export /** Strict JSON schema the model must emit; verified again by responseSchema on the way out. */
-const PLAN_JSON_SCHEMA = {
+/** Strict JSON schema the model must emit. */
+export const PLAN_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: ["plan", "summary", "steps"],
