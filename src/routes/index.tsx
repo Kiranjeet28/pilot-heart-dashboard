@@ -25,13 +25,21 @@ import { TaskStatusBadge } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from "@/components/ui/chart";
 import { useTicker } from "@/hooks/use-ticker";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/")({
   head: () =>
-    pageMeta("Dashboard", "Overview of DesktopPilot agent activity, live execution and task results."),
+    pageMeta(
+      "Dashboard",
+      "Overview of DesktopPilot agent activity, live execution and task results.",
+    ),
   component: Dashboard,
 });
 
@@ -128,9 +136,28 @@ function Dashboard() {
 
       <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-5">
         <Stat label="Total tasks" value={stats.total} icon={ListTodo} loading={!hydrated} />
-        <Stat label="Running" value={stats.running} icon={ActivityIcon} tone="info" loading={!hydrated} />
-        <Stat label="Completed" value={stats.completed} icon={CheckCircle2} tone="success" loading={!hydrated} hint="verified" />
-        <Stat label="Failed" value={stats.failed} icon={XCircle} tone="destructive" loading={!hydrated} />
+        <Stat
+          label="Running"
+          value={stats.running}
+          icon={ActivityIcon}
+          tone="info"
+          loading={!hydrated}
+        />
+        <Stat
+          label="Completed"
+          value={stats.completed}
+          icon={CheckCircle2}
+          tone="success"
+          loading={!hydrated}
+          hint="verified"
+        />
+        <Stat
+          label="Failed"
+          value={stats.failed}
+          icon={XCircle}
+          tone="destructive"
+          loading={!hydrated}
+        />
         <Stat
           label="Success rate"
           value={stats.successRate === null ? "—" : `${stats.successRate}%`}
@@ -192,11 +219,19 @@ function Dashboard() {
                   <ChartTooltip content={<ChartTooltipContent />} />
                   <Bar dataKey="completed" stackId="a" fill="var(--color-completed)" />
                   <Bar dataKey="failed" stackId="a" fill="var(--color-failed)" />
-                  <Bar dataKey="cancelled" stackId="a" fill="var(--color-cancelled)" radius={[3, 3, 0, 0]} />
+                  <Bar
+                    dataKey="cancelled"
+                    stackId="a"
+                    fill="var(--color-cancelled)"
+                    radius={[3, 3, 0, 0]}
+                  />
                 </BarChart>
               </ChartContainer>
             ) : (
-              <EmptyState title="No results yet" hint="Charts appear after your first task finishes." />
+              <EmptyState
+                title="No results yet"
+                hint="Charts appear after your first task finishes."
+              />
             )}
           </Panel>
         </div>

@@ -14,7 +14,10 @@ import { handleStepCheckRequest } from "@/lib/server/step-check";
 import { requestStepCheck } from "@/lib/ai/step-check-client";
 import type { ActionRequest, PlannedStep } from "@/lib/types";
 
-const step = (a: Partial<ActionRequest> & Pick<ActionRequest, "kind">, id = Math.random().toString()): PlannedStep => ({
+const step = (
+  a: Partial<ActionRequest> & Pick<ActionRequest, "kind">,
+  id = Math.random().toString(),
+): PlannedStep => ({
   id,
   requiresApproval: false,
   action: { targetId: "notepad", description: a.kind, ...a },
@@ -50,10 +53,23 @@ afterEach(() => {
 
 describe("approved scope", () => {
   it("allows a replan that reuses approved keys and text", () => {
-    expect(isWithinApprovedScope([step({ kind: "key_press", keys: "Windows+R" }), step({ kind: "type_text", text: "notepad" })], scope).ok).toBe(true);
+    expect(
+      isWithinApprovedScope(
+        [
+          step({ kind: "key_press", keys: "Windows+R" }),
+          step({ kind: "type_text", text: "notepad" }),
+        ],
+        scope,
+      ).ok,
+    ).toBe(true);
   });
   it("always allows wait and read_screen", () => {
-    expect(isWithinApprovedScope([step({ kind: "wait", durationMs: 500 }), step({ kind: "read_screen" })], scope).ok).toBe(true);
+    expect(
+      isWithinApprovedScope(
+        [step({ kind: "wait", durationMs: 500 }), step({ kind: "read_screen" })],
+        scope,
+      ).ok,
+    ).toBe(true);
   });
   it("rejects an unapproved key", () => {
     const r = isWithinApprovedScope([step({ kind: "key_press", keys: "alt+f4" })], scope);
@@ -63,10 +79,14 @@ describe("approved scope", () => {
     expect(isWithinApprovedScope([step({ kind: "paste" })], scope).ok).toBe(false);
   });
   it("rejects text the user didn't approve", () => {
-    expect(isWithinApprovedScope([step({ kind: "type_text", text: "rm -rf" })], scope).ok).toBe(false);
+    expect(isWithinApprovedScope([step({ kind: "type_text", text: "rm -rf" })], scope).ok).toBe(
+      false,
+    );
   });
   it("rejects a different target", () => {
-    expect(isWithinApprovedScope([step({ kind: "wait", targetId: "vscode" })], scope).ok).toBe(false);
+    expect(isWithinApprovedScope([step({ kind: "wait", targetId: "vscode" })], scope).ok).toBe(
+      false,
+    );
   });
 });
 
@@ -87,7 +107,11 @@ describe("replan limits and merge", () => {
     expect(mergeRemaining(approved, 1, many).ok).toBe(false);
   });
   it("builds context within the plan route limits", () => {
-    const ctx = buildReplanContext(approved, 1, { verdict: "off_track", reason: "x".repeat(900), screenSummary: "" });
+    const ctx = buildReplanContext(approved, 1, {
+      verdict: "off_track",
+      reason: "x".repeat(900),
+      screenSummary: "",
+    });
     expect(ctx.length).toBeLessThanOrEqual(12);
     expect(ctx.every((c) => c.length <= 500)).toBe(true);
   });
@@ -100,7 +124,10 @@ describe("replan limits and merge", () => {
 
 describe("check answers", () => {
   it("parses a valid verdict", () => {
-    expect(parseCheckResult({ verdict: "off_track", reason: "No Notepad", screenSummary: "Desktop" })?.verdict).toBe("off_track");
+    expect(
+      parseCheckResult({ verdict: "off_track", reason: "No Notepad", screenSummary: "Desktop" })
+        ?.verdict,
+    ).toBe("off_track");
   });
   it("rejects an unknown verdict", () => {
     expect(parseCheckResult({ verdict: "pass", reason: "x" })).toBeNull();
@@ -112,7 +139,9 @@ describe("/api/tasks/check", () => {
     expect((await handleStepCheckRequest(req(good, {}))).status).toBe(401);
   });
   it("rejects a non-image payload", async () => {
-    expect((await handleStepCheckRequest(req({ ...good, imageDataUrl: "javascript:alert(1)" }))).status).toBe(400);
+    expect(
+      (await handleStepCheckRequest(req({ ...good, imageDataUrl: "javascript:alert(1)" }))).status,
+    ).toBe(400);
   });
   it("rejects invalid JSON", async () => {
     expect((await handleStepCheckRequest(req("{nope"))).status).toBe(400);
@@ -127,7 +156,17 @@ describe("/api/tasks/check", () => {
       "fetch",
       vi.fn(async () =>
         Response.json({
-          choices: [{ message: { content: JSON.stringify({ verdict: "ok", reason: "Text visible", screenSummary: "Notepad" }) } }],
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  verdict: "ok",
+                  reason: "Text visible",
+                  screenSummary: "Notepad",
+                }),
+              },
+            },
+          ],
         }),
       ),
     );
@@ -137,7 +176,12 @@ describe("/api/tasks/check", () => {
   });
   it("rejects a malformed model answer", async () => {
     vi.stubEnv("LOVABLE_API_KEY", "test-key");
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ choices: [{ message: { content: '{"verdict":"maybe"}' } }] })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({ choices: [{ message: { content: '{"verdict":"maybe"}' } }] }),
+      ),
+    );
     expect((await handleStepCheckRequest(req(good))).status).toBe(502);
   });
   it("reports a timeout as 504", async () => {
@@ -147,7 +191,9 @@ describe("/api/tasks/check", () => {
       "fetch",
       vi.fn(
         (_u: unknown, init?: RequestInit) =>
-          new Promise((_r, reject) => init?.signal?.addEventListener("abort", () => reject(new Error("aborted")))),
+          new Promise((_r, reject) =>
+            init?.signal?.addEventListener("abort", () => reject(new Error("aborted"))),
+          ),
       ),
     );
     const p = handleStepCheckRequest(req(good));
@@ -159,12 +205,20 @@ describe("/api/tasks/check", () => {
 
 describe("browser check client", () => {
   it("turns a server error into unsure, never ok", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ message: "down" }, { status: 502 })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ message: "down" }, { status: 502 })),
+    );
     const r = await requestStepCheck(good);
     expect(r.verdict).toBe("unsure");
   });
   it("turns a network failure into unsure", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("offline"); }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("offline");
+      }),
+    );
     expect((await requestStepCheck(good)).verdict).toBe("unsure");
   });
 });
@@ -178,7 +232,10 @@ describe("AI quota handling", () => {
     expect(parseRetryAfterSeconds("retry in 300s")).toBe(65);
   });
   it("marks a 429 check as rate limited and unsure", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ message: "quota" }, { status: 429 })));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ message: "quota" }, { status: 429 })),
+    );
     const r = await requestStepCheck(good);
     expect(r.verdict).toBe("unsure");
     expect(r.rateLimited).toBe(true);

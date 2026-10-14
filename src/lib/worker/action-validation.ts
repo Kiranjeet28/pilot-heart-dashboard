@@ -15,7 +15,7 @@ const ALLOWED: readonly ActionKind[] = [
   "paste",
 ];
 const MAX_TEXT = 2000; // demo-mode limit for type_text
-// eslint-disable-next-line no-control-regex
+
 const PRINTABLE = /^[\x20-\x7E\n]*$/;
 
 export type ValidationResult =

@@ -10,7 +10,12 @@ import {
   type ProviderAdapter,
   type ProviderFailure,
 } from "@/lib/ai/provider";
-import { PLAN_JSON_SCHEMA, LOCAL_SYSTEM, buildPlanPrompt } from "@/lib/ai/plan-prompt";
+import {
+  PLAN_JSON_SCHEMA,
+  LOCAL_SYSTEM,
+  buildPlanPrompt,
+  uniqueContext,
+} from "@/lib/ai/plan-prompt";
 import type { AccountProfile, Provider } from "@/lib/types";
 
 export type AiMode = "auto" | "gemini" | "local";
@@ -226,7 +231,7 @@ export function fitLocalPrompt(
     return total <= LOCAL_TOKEN_BUDGET ? prompt : null;
   };
 
-  let ctx = [...context];
+  let ctx = uniqueContext(context);
   for (;;) {
     const p = fits(ctx);
     if (p) return p;
@@ -486,7 +491,7 @@ async function localOnce(
   const extra = reminder ? estimateTokens(REMINDER) : 0;
   // FIX: shorten long lines first, then fit. Previously shortening only ran after
   // the full context had already been dropped, so it never helped.
-  const context = shortenContext(request.context ?? []);
+  const context = shortenContext(uniqueContext(request.context));
 
   const prompt = fitLocalPrompt(request.userRequest, targetId, context, extra);
 

@@ -35,8 +35,7 @@ function stubGatewayFetch() {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {
-      const url =
-        typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (url.includes("/chat/completions") || url.includes("ai.gateway.lovable.dev")) {
         return Response.json({
           choices: [{ message: { content: JSON.stringify(gatewayState.payload) } }],

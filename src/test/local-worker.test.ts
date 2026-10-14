@@ -136,7 +136,7 @@ describe("strict (real worker) validation", () => {
 
 describe("readiness in REAL LOCAL mode", () => {
   const base = {
-    providerId: "gemini",
+    providerId: "qwen",
     profileId: "personal",
     targetId: "vscode",
     providers: DEFAULT_PROVIDERS,

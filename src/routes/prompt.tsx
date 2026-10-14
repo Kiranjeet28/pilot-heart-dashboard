@@ -31,7 +31,10 @@ import {
 
 export const Route = createFileRoute("/prompt")({
   head: () =>
-    pageMeta("Prompt Workspace", "Write a task in plain English or Hinglish and launch the DesktopPilot agent."),
+    pageMeta(
+      "Prompt Workspace",
+      "Write a task in plain English or Hinglish and launch the DesktopPilot agent.",
+    ),
   component: PromptWorkspace,
 });
 
@@ -72,7 +75,8 @@ function PromptWorkspace() {
 
   const providerProfiles = profiles.filter((p) => p.providerId === providerId);
   useEffect(() => {
-    if (!providerProfiles.some((p) => p.id === profileId)) setProfileId(providerProfiles[0]?.id ?? "");
+    if (!providerProfiles.some((p) => p.id === profileId))
+      setProfileId(providerProfiles[0]?.id ?? "");
   }, [providerId, profiles]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const readiness = actions.readiness({ providerId, profileId, targetId });
@@ -150,7 +154,9 @@ function PromptWorkspace() {
                   onChange={(e) => setContext(e.target.value)}
                   placeholder="Folder names, website address, anything the agent should know. Never paste passwords or keys."
                 />
-                <p className={`text-right font-mono text-[10px] ${tooLong ? "text-destructive" : "text-muted-foreground"}`}>
+                <p
+                  className={`text-right font-mono text-[10px] ${tooLong ? "text-destructive" : "text-muted-foreground"}`}
+                >
                   {prompt.length + context.length}/4000
                 </p>
               </div>
@@ -161,34 +167,51 @@ function PromptWorkspace() {
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="AI provider">
                 <Select value={providerId} onValueChange={setProviderId}>
-                  <SelectTrigger><SelectValue placeholder="Choose provider" /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose provider" />
+                  </SelectTrigger>
                   <SelectContent>
                     {providers.map((p) => (
                       <SelectItem key={p.id} value={p.id}>
-                        {p.displayName}{p.enabled ? "" : " (disabled)"}
+                        {p.displayName}
+                        {p.enabled ? "" : " (disabled)"}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </Field>
               <Field label="Account profile">
-                <Select value={profileId} onValueChange={setProfileId} disabled={!providerProfiles.length}>
+                <Select
+                  value={profileId}
+                  onValueChange={setProfileId}
+                  disabled={!providerProfiles.length}
+                >
                   <SelectTrigger>
-                    <SelectValue placeholder={providerProfiles.length ? "Choose profile" : "No profile for this provider"} />
+                    <SelectValue
+                      placeholder={
+                        providerProfiles.length ? "Choose profile" : "No profile for this provider"
+                      }
+                    />
                   </SelectTrigger>
                   <SelectContent>
                     {providerProfiles.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </Field>
               <Field label="Desktop target">
                 <Select value={targetId} onValueChange={setTargetId}>
-                  <SelectTrigger><SelectValue placeholder="Choose app" /></SelectTrigger>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose app" />
+                  </SelectTrigger>
                   <SelectContent>
                     {targets.map((t) => (
-                      <SelectItem key={t.id} value={t.id}>{t.displayName}</SelectItem>
+                      <SelectItem key={t.id} value={t.id}>
+                        {t.displayName}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -204,7 +227,9 @@ function PromptWorkspace() {
                   min={1}
                   max={30}
                   value={maxMinutes}
-                  onChange={(e) => setMaxMinutes(Math.min(30, Math.max(1, Number(e.target.value) || 1)))}
+                  onChange={(e) =>
+                    setMaxMinutes(Math.min(30, Math.max(1, Number(e.target.value) || 1)))
+                  }
                 />
               </Field>
               <Field label="Retry limit per step (0–2)">
@@ -213,13 +238,15 @@ function PromptWorkspace() {
                   min={0}
                   max={2}
                   value={maxRetries}
-                  onChange={(e) => setMaxRetries(Math.min(2, Math.max(0, Number(e.target.value) || 0)))}
+                  onChange={(e) =>
+                    setMaxRetries(Math.min(2, Math.max(0, Number(e.target.value) || 0)))
+                  }
                 />
               </Field>
             </div>
             <p className="mt-3 text-xs text-muted-foreground">
-              Add more providers, profiles and apps on their own pages. Profiles only store a reference
-              name — keys and passwords are never shown here.
+              Add more providers, profiles and apps on their own pages. Profiles only store a
+              reference name — keys and passwords are never shown here.
             </p>
           </Panel>
 
@@ -229,7 +256,9 @@ function PromptWorkspace() {
                 <AlertTriangle className="h-4 w-4" /> Fix these before starting
               </p>
               <ul className="mt-1 list-disc pl-5 text-xs text-muted-foreground">
-                {issues.map((i) => <li key={i}>{i}</li>)}
+                {issues.map((i) => (
+                  <li key={i}>{i}</li>
+                ))}
               </ul>
             </div>
           ) : null}
@@ -248,7 +277,14 @@ function PromptWorkspace() {
             >
               <Save className="h-4 w-4" /> Save Prompt
             </Button>
-            <Button variant="ghost" onClick={() => { setPrompt(""); setContext(""); setIssues([]); }}>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setPrompt("");
+                setContext("");
+                setIssues([]);
+              }}
+            >
               Clear
             </Button>
           </div>
@@ -269,12 +305,21 @@ function PromptWorkspace() {
             {shown.length ? (
               <ul className="max-h-[560px] space-y-2 overflow-y-auto pr-1">
                 {shown.map((p) => (
-                  <li key={p.id} className="rounded-md border p-2.5 transition-colors hover:border-primary/50">
+                  <li
+                    key={p.id}
+                    className="rounded-md border p-2.5 transition-colors hover:border-primary/50"
+                  >
                     <p className="text-sm">{p.title}</p>
-                    {p.context ? <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">{p.context}</p> : null}
+                    {p.context ? (
+                      <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
+                        {p.context}
+                      </p>
+                    ) : null}
                     <div className="mt-2 flex items-center justify-between">
                       <span className="font-mono text-[10px] text-muted-foreground">
-                        {p.lastUsedAt ? `used ${fmtDateTime(p.lastUsedAt)}` : `saved ${fmtDateTime(p.createdAt)}`}
+                        {p.lastUsedAt
+                          ? `used ${fmtDateTime(p.lastUsedAt)}`
+                          : `saved ${fmtDateTime(p.createdAt)}`}
                       </span>
                       <div className="flex gap-1">
                         <Button
@@ -288,7 +333,12 @@ function PromptWorkspace() {
                         >
                           <RotateCcw className="h-3.5 w-3.5" /> Reuse
                         </Button>
-                        <Button size="icon" variant="ghost" aria-label="Delete prompt" onClick={() => promptStore.remove(p.id)}>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          aria-label="Delete prompt"
+                          onClick={() => promptStore.remove(p.id)}
+                        >
                           <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       </div>
@@ -299,7 +349,11 @@ function PromptWorkspace() {
             ) : (
               <EmptyState
                 title={saved.length ? "No prompts match" : "No saved prompts"}
-                hint={saved.length ? "Try a different search." : "Press Save Prompt to keep one for later."}
+                hint={
+                  saved.length
+                    ? "Try a different search."
+                    : "Press Save Prompt to keep one for later."
+                }
               />
             )}
           </Panel>
@@ -314,8 +368,8 @@ function PromptWorkspace() {
               <div className="space-y-2 text-sm">
                 <p className="text-foreground">{prompt.trim()}</p>
                 <p className="font-mono text-xs">
-                  {label(providers, providerId)} · {label(profiles, profileId)} · {label(targets, targetId)} ·{" "}
-                  {maxMinutes} min · {maxRetries} retries
+                  {label(providers, providerId)} · {label(profiles, profileId)} ·{" "}
+                  {label(targets, targetId)} · {maxMinutes} min · {maxRetries} retries
                 </p>
                 <p>
                   {real

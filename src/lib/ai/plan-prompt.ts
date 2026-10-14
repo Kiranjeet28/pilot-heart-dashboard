@@ -7,9 +7,16 @@ export interface PlanPromptInput {
   context?: string[] | undefined;
 }
 
-/** Stable system prompt for llama.cpp prompt-cache reuse across planning calls. */
+/**
+ * Static planning rules live here (not in the per-request user prompt) so llama.cpp
+ * `cache_prompt` can reuse a stable prefix. Semantic constraints that the JSON schema
+ * grammar cannot enforce — safety, target pinning, verification usage — stay explicit.
+ */
 export const LOCAL_SYSTEM =
-  "You are DesktopPilot's local task planner. Return valid JSON only matching the schema (max 12 steps). Plan safe desktop automation for the target.";
+  "You are DesktopPilot's local task planner. JSON only, matching the schema. Max 12 safe steps. " +
+  "Actions: focus_window, read_screen, click, type_text, key_press, wait, copy_selection, paste. " +
+  "Verify with worker_ok or screen_capture; text_match only with expectedText; clipboard only after copy_selection. " +
+  "Each step needs action, requiresApproval, and verification. Keep plan, summary, and descriptions brief.";
 
 /** Strict JSON schema the model must emit. */
 export const PLAN_JSON_SCHEMA = {
@@ -75,24 +82,33 @@ export const PLAN_JSON_SCHEMA = {
   },
 } as const;
 
+/** Drop blanks and exact duplicate context lines; keep the newest copy of each line. */
+export function uniqueContext(context?: string[]): string[] {
+  const last = new Map<string, string>();
+  for (const raw of context ?? []) {
+    const line = raw.trim();
+    if (!line) continue;
+    const key = line.toLowerCase();
+    last.delete(key);
+    last.set(key, line);
+  }
+  return [...last.values()];
+}
+
 /**
- * Compact, consistent prompt for initial planning and replanning.
- * Pins target ID, user objective, allowed action kinds, verification rules, and max steps.
- * Omits redundant schema duplicates since llama-server grammar enforces response_format directly.
+ * Per-request user prompt: only the varying target, task, and relevant context.
+ * Static action/verification/step rules live in LOCAL_SYSTEM.
  */
 export function buildPlanPrompt(input: PlanPromptInput): string {
   const targetId = input.targetId ?? "desktop";
   const safeRequest = input.userRequest.trim();
-  const contextLines = input.context?.filter((c) => c && c.trim().length > 0) ?? [];
+  const contextLines = uniqueContext(input.context);
   const contextBlock = contextLines.length
-    ? `\nContext:\n${contextLines.map((item) => `- ${item.trim()}`).join("\n")}`
+    ? `\nContext:\n${contextLines.map((item) => `- ${item}`).join("\n")}`
     : "";
 
   return [
     `Selected target: "${targetId}". Every action's targetId MUST be exactly "${targetId}".`,
     `Task: ${safeRequest}${contextBlock}`,
-    "Allowed actions: focus_window, read_screen, click, type_text, key_press, wait, copy_selection, paste.",
-    "Verification: worker_ok and screen_capture are always allowed. Use text_match only with expectedText for known on-screen text. Use clipboard only for copy_selection.",
-    "Requirements: Safe actions only. Max 12 steps. Every step must have action, requiresApproval, and verification.",
   ].join("\n");
 }

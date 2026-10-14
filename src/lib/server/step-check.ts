@@ -98,8 +98,14 @@ async function viaGateway(i: StepCheckInput, key: string, signal: AbortSignal) {
       ],
     }),
   });
-  if (res.status === 429) throw new CheckError("rate_limit", "AI quota reached for screen checks.", 429);
-  if (!res.ok) throw new CheckError(res.status === 401 ? "auth_failed" : "provider_error", `AI check failed (HTTP ${res.status})`, 502);
+  if (res.status === 429)
+    throw new CheckError("rate_limit", "AI quota reached for screen checks.", 429);
+  if (!res.ok)
+    throw new CheckError(
+      res.status === 401 ? "auth_failed" : "provider_error",
+      `AI check failed (HTTP ${res.status})`,
+      502,
+    );
   const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
   return parseModelText(data.choices?.[0]?.message?.content ?? "");
 }
@@ -110,29 +116,38 @@ async function viaDirect(i: StepCheckInput, signal: AbortSignal) {
     throw new CheckError("missing_credentials", "No AI key configured for screen checks.", 500);
   const m = model().split("/").pop();
   const [, mime = "image/png", b64 = ""] = i.imageDataUrl.match(/^data:([^;]+);base64,(.*)$/) ?? [];
-  const res = await fetch(`${GEMINI_DIRECT_URL}/${m}:generateContent?key=${encodeURIComponent(key)}`, {
-    method: "POST",
-    signal,
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: SYSTEM }] },
-      contents: [
-        { role: "user", parts: [{ text: promptFor(i) }, { inline_data: { mime_type: mime, data: b64 } }] },
-      ],
-      generationConfig: {
-        temperature: 0,
-        maxOutputTokens: 1024,
-        thinkingConfig: { thinkingBudget: 0 },
-        responseMimeType: "application/json",
-      },
-    }),
-  });
-  if (res.status === 429) throw new CheckError("rate_limit", "AI quota reached for screen checks.", 429);
+  const res = await fetch(
+    `${GEMINI_DIRECT_URL}/${m}:generateContent?key=${encodeURIComponent(key)}`,
+    {
+      method: "POST",
+      signal,
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: SYSTEM }] },
+        contents: [
+          {
+            role: "user",
+            parts: [{ text: promptFor(i) }, { inline_data: { mime_type: mime, data: b64 } }],
+          },
+        ],
+        generationConfig: {
+          temperature: 0,
+          maxOutputTokens: 1024,
+          thinkingConfig: { thinkingBudget: 0 },
+          responseMimeType: "application/json",
+        },
+      }),
+    },
+  );
+  if (res.status === 429)
+    throw new CheckError("rate_limit", "AI quota reached for screen checks.", 429);
   if (!res.ok) throw new CheckError("provider_error", `AI check failed (HTTP ${res.status})`, 502);
   const data = (await res.json()) as {
     candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
   };
-  return parseModelText(data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "");
+  return parseModelText(
+    data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "",
+  );
 }
 
 export async function runStepCheck(i: StepCheckInput): Promise<StepCheckResult> {
@@ -144,13 +159,18 @@ export async function runStepCheck(i: StepCheckInput): Promise<StepCheckResult> 
     try {
       return await viaGateway(i, key, controller.signal);
     } catch (e) {
-      if (e instanceof CheckError && e.code === "auth_failed" && process.env["GEMINI_API_KEY"]?.trim())
+      if (
+        e instanceof CheckError &&
+        e.code === "auth_failed" &&
+        process.env["GEMINI_API_KEY"]?.trim()
+      )
         return await viaDirect(i, controller.signal);
       throw e;
     }
   } catch (e) {
     if (e instanceof CheckError) throw e;
-    if (controller.signal.aborted) throw new CheckError("timeout", "The screen check timed out.", 504);
+    if (controller.signal.aborted)
+      throw new CheckError("timeout", "The screen check timed out.", 504);
     throw new CheckError("network_error", "The screen check could not reach the AI service.", 502);
   } finally {
     clearTimeout(timer);
@@ -163,10 +183,13 @@ const fail = (status: number, code: string, message: string) =>
 export async function handleStepCheckRequest(request: Request): Promise<Response> {
   if (request.method !== "POST") return fail(405, "invalid_method", "POST is required.");
   if (!isAuthorizedRequest(request)) return fail(401, "unauthorized", "Authentication required.");
-  const origin = request.headers.get("origin") ?? request.headers.get("referer") ?? "headerless-client";
-  if (isRateLimited(`check:${origin}`, 60)) return fail(429, "rate_limited", "Too many screen checks. Try again shortly.");
+  const origin =
+    request.headers.get("origin") ?? request.headers.get("referer") ?? "headerless-client";
+  if (isRateLimited(`check:${origin}`, 60))
+    return fail(429, "rate_limited", "Too many screen checks. Try again shortly.");
   const raw = await request.text();
-  if (raw.length > MAX_BODY_CHARS) return fail(413, "payload_too_large", "Screenshot is too large to check.");
+  if (raw.length > MAX_BODY_CHARS)
+    return fail(413, "payload_too_large", "Screenshot is too large to check.");
   let body: unknown;
   try {
     body = JSON.parse(raw);
@@ -179,7 +202,8 @@ export async function handleStepCheckRequest(request: Request): Promise<Response
   try {
     return Response.json({ ok: true, ...(await runStepCheck(parsed.data)) });
   } catch (e) {
-    const err = e instanceof CheckError ? e : new CheckError("unknown", "Screen check failed.", 502);
+    const err =
+      e instanceof CheckError ? e : new CheckError("unknown", "Screen check failed.", 502);
     return fail(err.status, err.code, err.message);
   }
 }

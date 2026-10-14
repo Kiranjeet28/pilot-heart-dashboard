@@ -49,7 +49,13 @@ describe("prompt workspace", () => {
   it("searches title, prompt and context case-insensitively", () => {
     const list: SavedPrompt[] = [
       { id: "1", title: "Open VS Code", prompt: "Open VS Code", context: "", createdAt: 1 },
-      { id: "2", title: "Browser", prompt: "Open the browser", context: "my Website", createdAt: 2 },
+      {
+        id: "2",
+        title: "Browser",
+        prompt: "Open the browser",
+        context: "my Website",
+        createdAt: 2,
+      },
     ];
     expect(searchPrompts(list, "website").map((p) => p.id)).toEqual(["2"]);
     expect(searchPrompts(list, "  ")).toHaveLength(2);

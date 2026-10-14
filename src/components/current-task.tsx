@@ -79,7 +79,9 @@ export function CurrentTask({ task }: { task?: Task | undefined }) {
       {s === "waiting_for_approval" && step ? (
         <div className="mt-4 rounded-md border border-warning/40 bg-warning/5 p-3">
           <p className="text-sm font-medium text-warning">
-            {real && !confirmed ? "Confirm first REAL desktop action" : "Approve this plan to start"}
+            {real && !confirmed
+              ? "Confirm first REAL desktop action"
+              : "Approve this plan to start"}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
             The agent will run {task.steps.length} steps:

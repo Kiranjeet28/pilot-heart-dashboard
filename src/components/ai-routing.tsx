@@ -27,7 +27,10 @@ export function AiProviderBadge() {
       ? "border-info/40 bg-info/10 text-info"
       : "border-destructive/40 bg-destructive/10 text-destructive";
   return (
-    <span className={`rounded border px-2 py-0.5 font-mono text-[11px] ${cls}`} title="Local Qwen planner">
+    <span
+      className={`rounded border px-2 py-0.5 font-mono text-[11px] ${cls}`}
+      title="Local Qwen planner"
+    >
       AI: {active === "local" ? "Local Qwen" : "Offline"}
     </span>
   );
@@ -48,11 +51,7 @@ export function LocalThinkingNote() {
         ? "Local Qwen is processing task prompt..."
         : `Local Qwen is generating plan... ${s.localTokens} tokens`;
 
-  return (
-    <p className="mt-2 animate-pulse text-xs text-info font-mono">
-      {msg}
-    </p>
-  );
+  return <p className="mt-2 animate-pulse text-xs text-info font-mono">{msg}</p>;
 }
 
 export function AiRoutingPanel() {
@@ -85,7 +84,8 @@ export function AiRoutingPanel() {
           <p className="font-medium text-foreground">Local Qwen (llama-server)</p>
           <p className="text-muted-foreground">
             All task planning and replanning paths use your local llama-server running model alias{" "}
-            <code className="font-mono text-foreground font-semibold">qwen</code>. Remote planning services (Gemini, Lovable AI) are permanently disabled.
+            <code className="font-mono text-foreground font-semibold">qwen</code>. Remote planning
+            services (Gemini, Lovable AI) are permanently disabled.
           </p>
         </div>
 
@@ -111,7 +111,8 @@ export function AiRoutingPanel() {
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            The local Qwen model is text-only. Screen checks are safely skipped as unverified without sending screenshots to external services.
+            The local Qwen model is text-only. Screen checks are safely skipped as unverified
+            without sending screenshots to external services.
           </p>
         </div>
 
@@ -124,12 +125,14 @@ export function AiRoutingPanel() {
         {diag ? (
           <div className="rounded border bg-background/50 p-2 font-mono text-[11px] space-y-1">
             <p>
-              Health: {diag.health.ok ? "OK" : "failed"} · {diag.health.latencyMs} ms — {diag.health.message}
+              Health: {diag.health.ok ? "OK" : "failed"} · {diag.health.latencyMs} ms —{" "}
+              {diag.health.message}
             </p>
             {diag.chat ? (
               <p>
-                Test chat: {diag.chat.ok ? `"${diag.chat.reply}"` : "failed"} · {(diag.chat.latencyMs / 1000).toFixed(1)} s ·{" "}
-                {diag.chat.tokens} tokens · {diag.chat.tokensPerSec} tokens/s
+                Test chat: {diag.chat.ok ? `"${diag.chat.reply}"` : "failed"} ·{" "}
+                {(diag.chat.latencyMs / 1000).toFixed(1)} s · {diag.chat.tokens} tokens ·{" "}
+                {diag.chat.tokensPerSec} tokens/s
               </p>
             ) : null}
             <p className={diag.failure ? "text-destructive" : "text-success"}>
@@ -141,10 +144,15 @@ export function AiRoutingPanel() {
 
         {s.log.length ? (
           <details className="text-xs">
-            <summary className="cursor-pointer text-muted-foreground font-medium">Recent planning requests ({s.log.length})</summary>
+            <summary className="cursor-pointer text-muted-foreground font-medium">
+              Recent planning requests ({s.log.length})
+            </summary>
             <ul className="mt-1 space-y-1 font-mono text-[11px]">
               {s.log.slice(0, 10).map((e) => (
-                <li key={e.at + e.note} className={`p-1.5 rounded border ${e.ok ? "bg-muted/30" : "bg-destructive/10 text-destructive"}`}>
+                <li
+                  key={e.at + e.note}
+                  className={`p-1.5 rounded border ${e.ok ? "bg-muted/30" : "bg-destructive/10 text-destructive"}`}
+                >
                   <div className="flex justify-between">
                     <span>{new Date(e.at).toLocaleTimeString()} · local Qwen</span>
                     <span>
@@ -155,8 +163,11 @@ export function AiRoutingPanel() {
                   </div>
                   {e.promptMs !== undefined ? (
                     <div className="text-[10px] text-muted-foreground">
-                      Prompt prefill: {e.promptMs.toFixed(0)} ms ({e.promptTokens ?? 0} tokens, {e.cacheTokens ?? 0} cached)
-                      {e.timeToFirstTokenMs ? ` · TTFT: ${(e.timeToFirstTokenMs / 1000).toFixed(1)} s` : ""}
+                      Prompt prefill: {e.promptMs.toFixed(0)} ms ({e.promptTokens ?? 0} tokens,{" "}
+                      {e.cacheTokens ?? 0} cached)
+                      {e.timeToFirstTokenMs
+                        ? ` · TTFT: ${(e.timeToFirstTokenMs / 1000).toFixed(1)} s`
+                        : ""}
                     </div>
                   ) : null}
                   <div className="truncate text-muted-foreground">{e.note}</div>

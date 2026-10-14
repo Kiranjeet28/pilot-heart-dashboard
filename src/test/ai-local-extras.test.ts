@@ -4,6 +4,7 @@ import {
   DIAGNOSTIC_HINTS,
   LOCAL_IDLE_TIMEOUT_MS,
   LOCAL_HARD_CAP_MS,
+  LOCAL_MAX_TOKENS,
   LOCAL_TOKEN_BUDGET,
   __resetAiStatus,
   aiStatus,
@@ -20,18 +21,31 @@ import {
   stripImageParts,
   stripThinking,
 } from "@/lib/ai/aiProvider";
+import {
+  LOCAL_SYSTEM,
+  PLAN_JSON_SCHEMA,
+  buildPlanPrompt,
+  uniqueContext,
+} from "@/lib/ai/plan-prompt";
+import { normalizeProviderResponse } from "@/lib/ai/provider";
 import { DEFAULT_PROVIDERS, DEFAULT_SETTINGS } from "@/lib/registry/defaults";
 
 const plan = {
   plan: ["Look"],
   summary: "ok",
-  steps: [{ action: { kind: "read_screen", targetId: "notepad", description: "Look" }, requiresApproval: false }],
+  steps: [
+    {
+      action: { kind: "read_screen", targetId: "notepad", description: "Look" },
+      requiresApproval: false,
+    },
+  ],
 };
 const req = { userRequest: "Open Notepad", targetId: "notepad", provider: DEFAULT_PROVIDERS[0]! };
 const sse = (parts: string[]) =>
   new Response(
-    parts.map((p) => `data: ${JSON.stringify({ choices: [{ delta: { content: p } }] })}\n\n`).join("") +
-      "data: [DONE]\n\n",
+    parts
+      .map((p) => `data: ${JSON.stringify({ choices: [{ delta: { content: p } }] })}\n\n`)
+      .join("") + "data: [DONE]\n\n",
   );
 let bodies: Array<Record<string, unknown>> = [];
 
@@ -103,13 +117,19 @@ describe("2. streaming + timeouts", () => {
 describe("3. images and cleanup", () => {
   it("strips image parts and keeps text", () => {
     const out = stripImageParts([
-      { role: "user", content: [{ type: "text", text: "hi" }, { type: "image_url", image_url: { url: "data:x" } }] },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "hi" },
+          { type: "image_url", image_url: { url: "data:x" } },
+        ],
+      },
     ]);
     expect(out[0]!.content).toBe("hi");
     expect(JSON.stringify(out)).not.toContain("image");
   });
   it("removes <think> blocks before parsing", async () => {
-    expect(stripThinking("<think>hmm</think>{\"a\":1}")).toBe('{"a":1}');
+    expect(stripThinking('<think>hmm</think>{"a":1}')).toBe('{"a":1}');
     stubLocal(() => sse(["<think>planning…</think>", JSON.stringify(plan)]));
     expect((await callLocal(req)).ok).toBe(true);
   });
@@ -128,11 +148,20 @@ describe("4. context budget", () => {
     expect(estimateTokens("x".repeat(35))).toBe(10);
   });
   it("drops oldest history first and keeps the user request", () => {
-    const ctx = ["OLDEST " + "a".repeat(10000), "b".repeat(10000), "NEWEST"];
+    const ctx = Array.from({ length: 80 }, (_, i) => `hist-${i} ${"x".repeat(500)}`);
     const p = fitLocalPrompt("Open Notepad", "notepad", ctx)!;
     expect(p).toContain("Open Notepad");
-    expect(p).not.toContain("OLDEST");
-    expect(estimateTokens(p) + 1024).toBeLessThanOrEqual(LOCAL_TOKEN_BUDGET);
+    expect(p).not.toContain("hist-0 ");
+    expect(p).toContain("hist-79");
+    expect(
+      estimateTokens(LOCAL_SYSTEM) + estimateTokens(p) + 250 + LOCAL_MAX_TOKENS,
+    ).toBeLessThanOrEqual(LOCAL_TOKEN_BUDGET);
+  });
+  it("dedupes identical context lines before fitting", () => {
+    expect(uniqueContext(["A", " a ", "", "B", "A"])).toEqual(["B", "A"]);
+    const p = fitLocalPrompt("Open Notepad", "notepad", ["same note", "same note", "newer"])!;
+    expect(p.match(/same note/g)?.length).toBe(1);
+    expect(p).toContain("newer");
   });
   it("refuses to send when the request itself cannot fit", async () => {
     stubLocal(() => sse([JSON.stringify(plan)]));
@@ -202,7 +231,12 @@ describe("7. diagnostics", () => {
     expect(d.hint).toBe(DIAGNOSTIC_HINTS.cors_or_browser_block);
   });
   it("flags server not running when nothing answers", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("Failed to fetch"); }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("Failed to fetch");
+      }),
+    );
     expect((await runLocalDiagnostics()).failure).toBe("server_not_running");
   });
 });
@@ -226,5 +260,96 @@ describe("9. request log", () => {
     expect(e.latencyMs).toBeGreaterThanOrEqual(0);
     expect(e.outputTokens).toBe(1);
     expect(e.fallbackReason).toBe("Gemini quota");
+  });
+});
+
+const schemaOverhead = 250;
+
+function inputTokens(userRequest: string, targetId: string, context: string[] = []) {
+  const prompt = buildPlanPrompt({ userRequest, targetId, context });
+  return estimateTokens(LOCAL_SYSTEM) + estimateTokens(prompt) + schemaOverhead;
+}
+
+describe("10. planning prompt token reductions", () => {
+  it("simple requests omit duplicated static rules from the user prompt", () => {
+    const prompt = buildPlanPrompt({ userRequest: "Open Notepad", targetId: "notepad" });
+    expect(prompt.startsWith('Selected target: "notepad"')).toBe(true);
+    expect(prompt).toContain("Task: Open Notepad");
+    expect(prompt).not.toContain("Allowed actions:");
+    expect(prompt.split("\n").length).toBe(2);
+    const previousUser =
+      'Selected target: "notepad". Every action\'s targetId MUST be exactly "notepad".\n' +
+      "Task: Open Notepad\n" +
+      "Allowed actions: focus_window, read_screen, click, type_text, key_press, wait, copy_selection, paste.\n" +
+      "Verification: worker_ok and screen_capture are always allowed. Use text_match only with expectedText for known on-screen text. Use clipboard only for copy_selection.\n" +
+      "Requirements: Safe actions only. Max 12 steps. Every step must have action, requiresApproval, and verification.";
+    const previousSystem =
+      "You are DesktopPilot's local task planner. Return valid JSON only matching the schema (max 12 steps). Plan safe desktop automation for the target.";
+    const previous = estimateTokens(previousSystem) + estimateTokens(previousUser) + schemaOverhead;
+    expect(inputTokens("Open Notepad", "notepad")).toBeLessThan(previous);
+  });
+
+  it("long histories keep the request and newest lines, not duplicates", () => {
+    const ctx = [...Array.from({ length: 8 }, (_, i) => `step ${i} finished`), "step 7 finished"];
+    const prompt = buildPlanPrompt({
+      userRequest: "Continue typing the report",
+      targetId: "word",
+      context: ctx,
+    });
+    expect(prompt).toContain("Continue typing the report");
+    expect(prompt.match(/step 7 finished/g)?.length).toBe(1);
+    expect(prompt).toContain("step 0 finished");
+  });
+
+  it("complex multi-step replan context stays intact when it fits the budget", () => {
+    const ctx = [
+      "REPLAN: plan ONLY remaining steps from the current screen.",
+      "Steps already done: 1. Focus Notepad; 2. Type heading",
+      "Current screen: untitled document",
+      "Problem after the last step: save dialog appeared",
+      "Reuse only approved action kinds, keys, and typed text.",
+    ];
+    const p = fitLocalPrompt("Save the file as report.txt", "notepad", ctx)!;
+    for (const line of ctx) expect(p).toContain(line);
+    expect(p).toContain("Save the file as report.txt");
+  });
+
+  it("accepts valid plans that omit optional schema fields", () => {
+    const parsed = normalizeProviderResponse({
+      plan: ["Look", "Type"],
+      summary: "Two-step plan",
+      steps: [
+        {
+          action: { kind: "read_screen", targetId: "notepad", description: "Look" },
+          requiresApproval: false,
+        },
+        {
+          action: {
+            kind: "type_text",
+            targetId: "notepad",
+            description: "Type",
+            text: "hello",
+          },
+          requiresApproval: true,
+          verification: { kind: "text_match", expectedText: "hello" },
+        },
+      ],
+    });
+    expect(parsed.steps).toHaveLength(2);
+    expect(parsed.steps[0]?.verification).toBeUndefined();
+    expect(parsed.steps[1]?.verification?.expectedText).toBe("hello");
+  });
+
+  it("rejects malformed JSON that cannot be repaired", async () => {
+    stubLocal(() => sse(["not-json-at-all"]));
+    const r = await callLocal(req);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe("invalid_response");
+    expect(bodies.length).toBe(2);
+  });
+
+  it("keeps PLAN_JSON_SCHEMA fields required by execution unchanged", () => {
+    expect(PLAN_JSON_SCHEMA.required).toEqual(["plan", "summary", "steps"]);
+    expect(PLAN_JSON_SCHEMA.properties.steps.maxItems).toBe(12);
   });
 });

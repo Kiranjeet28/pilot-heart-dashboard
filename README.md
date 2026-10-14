@@ -1,4 +1,5 @@
 <!-- LOVABLE:BEGIN -->
+
 > [!IMPORTANT]
 > This project is connected to [Lovable](https://lovable.dev). Avoid rewriting
 > published git history — force pushing, or rebasing/amending/squashing commits
@@ -7,6 +8,7 @@
 >
 > Commits you push to the connected branch sync back to Lovable and show up in
 > the editor, so keep the branch in a working state.
+
 <!-- LOVABLE:END -->
 
 # DesktopPilot
@@ -130,7 +132,7 @@ Task planning calls `POST /api/tasks/plan` (registered in `src/routes/api/tasks/
 
 1. Start `llama-server` with model alias `qwen` on `http://127.0.0.1:8081`.
 2. Start and pair the worker (sections 2–3 above), keep the dashboard on **REAL LOCAL** with
-   the target's interaction mode set to *assisted* or *autonomous*.
+   the target's interaction mode set to _assisted_ or _autonomous_.
 3. Create a task such as "Open Notepad and type DesktopPilot test 123" on the target, and start it.
 4. Expected: a local Qwen plan appears, steps run one at a time on the real desktop with approval
    prompts for input actions, and the task ends `completed` only if every verification passed
@@ -155,16 +157,16 @@ Task planning calls `POST /api/tasks/plan` (registered in `src/routes/api/tasks/
 
 See the detailed table in [`worker/visual-agent/README.md`](worker/visual-agent/README.md). Common ones:
 
-| Symptom | Fix |
-| --- | --- |
-| `No signing key found` | Run `python -m desktoppilot_worker setup` |
-| `Port 8765 is already in use` | Close the other worker window, or free it: `Get-NetTCPConnection -LocalPort 8765 -State Listen \| Select-Object -ExpandProperty OwningProcess` then `Stop-Process -Id <that number>` |
-| Dashboard: "Could not reach the worker" | Worker running? Port matches Settings? Exact page origin in `allowed_origins` (restart after editing)? Local-network access allowed? On Safari, use local development |
-| `origin_not_allowed` in the worker log | Add the logged origin to `allowed_origins` and restart |
-| 401 "rejected the session" | Token expired or key rotated — restart the worker and pair again |
-| `409 observation_stale` / `screen_changed` | Capture again (observations last 60 s) |
-| `423 failsafe_triggered` | Mouse hit a screen corner; reset the Emergency Stop |
-| Clicks land wrong | Use the main display (multi-monitor/DPI not supported yet) |
+| Symptom                                    | Fix                                                                                                                                                                                  |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `No signing key found`                     | Run `python -m desktoppilot_worker setup`                                                                                                                                            |
+| `Port 8765 is already in use`              | Close the other worker window, or free it: `Get-NetTCPConnection -LocalPort 8765 -State Listen \| Select-Object -ExpandProperty OwningProcess` then `Stop-Process -Id <that number>` |
+| Dashboard: "Could not reach the worker"    | Worker running? Port matches Settings? Exact page origin in `allowed_origins` (restart after editing)? Local-network access allowed? On Safari, use local development                |
+| `origin_not_allowed` in the worker log     | Add the logged origin to `allowed_origins` and restart                                                                                                                               |
+| 401 "rejected the session"                 | Token expired or key rotated — restart the worker and pair again                                                                                                                     |
+| `409 observation_stale` / `screen_changed` | Capture again (observations last 60 s)                                                                                                                                               |
+| `423 failsafe_triggered`                   | Mouse hit a screen corner; reset the Emergency Stop                                                                                                                                  |
+| Clicks land wrong                          | Use the main display (multi-monitor/DPI not supported yet)                                                                                                                           |
 
 ## Module 3: Local Qwen task planning
 

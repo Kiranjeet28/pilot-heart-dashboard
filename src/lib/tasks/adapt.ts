@@ -33,13 +33,7 @@ export interface ApprovedScope {
 /** Harmless kinds that are always allowed in a replan. */
 const ALWAYS_ALLOWED: ActionKind[] = ["read_screen", "wait"];
 /** Actions that change the screen and therefore get a check afterwards. */
-const CHECKED_KINDS: ActionKind[] = [
-  "focus_window",
-  "click",
-  "type_text",
-  "key_press",
-  "paste",
-];
+const CHECKED_KINDS: ActionKind[] = ["focus_window", "click", "type_text", "key_press", "paste"];
 
 export const shouldCheckAfter = (kind: ActionKind) => CHECKED_KINDS.includes(kind);
 
@@ -81,7 +75,9 @@ export function mergeRemaining(
   doneIndex: number,
   remaining: PlannedStep[],
 ): { ok: true; steps: PlannedStep[] } | { ok: false; reason: string } {
-  const kept = steps.slice(0, doneIndex + 1).map((s, i) => (i === doneIndex ? { ...s, done: true } : s));
+  const kept = steps
+    .slice(0, doneIndex + 1)
+    .map((s, i) => (i === doneIndex ? { ...s, done: true } : s));
   const merged = [...kept, ...remaining.map((s) => ({ ...s, approved: true }))];
   if (merged.length > MAX_TOTAL_STEPS)
     return { ok: false, reason: `the adjusted plan would exceed ${MAX_TOTAL_STEPS} steps` };
@@ -116,10 +112,10 @@ export function buildReplanContext(
     .map((s, i) => `${i + 1}. ${s.action.description}`)
     .join("; ");
   return [
-    "REPLAN: the task is already in progress. Plan ONLY the remaining steps from the current screen.",
+    "REPLAN: plan ONLY remaining steps from the current screen.",
     `Steps already done: ${done}`.slice(0, 500),
     `Current screen: ${check.screenSummary || "unknown"}`.slice(0, 500),
     `Problem after the last step: ${check.reason}`.slice(0, 500),
-    "Reuse only the same kinds of actions, keys and typed text as the original plan.",
+    "Reuse only approved action kinds, keys, and typed text.",
   ];
 }

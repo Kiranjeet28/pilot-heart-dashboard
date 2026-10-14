@@ -43,7 +43,7 @@ describe("mock worker", () => {
 
 describe("readiness", () => {
   const base = {
-    providerId: "gemini",
+    providerId: "qwen",
     profileId: "personal",
     targetId: "vscode",
     providers: DEFAULT_PROVIDERS,

@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { normalizeProviderResponse, type ProviderResult } from "@/lib/ai/provider";
-import { PLAN_JSON_SCHEMA, LOCAL_SYSTEM, buildPlanPrompt as buildPrompt } from "@/lib/ai/plan-prompt";
+import {
+  PLAN_JSON_SCHEMA,
+  LOCAL_SYSTEM,
+  buildPlanPrompt as buildPrompt,
+} from "@/lib/ai/plan-prompt";
 
 export interface TaskPlanRequestInput {
   taskId?: string | undefined;
@@ -125,13 +129,13 @@ export function toGeminiResponseSchema(schema: unknown): unknown {
  * Never calls Gemini or Lovable AI Gateway.
  */
 export async function generateTaskPlan(input: TaskPlanRequestInput): Promise<ProviderResult> {
-  const rawBase = process.env.LOCAL_LLM_BASE_URL ?? "http://127.0.0.1:8081";
+  const rawBase = "http://127.0.0.1:8081";
   const baseUrl = rawBase.replace(/\/+$/, "");
   const endpoint = baseUrl.endsWith("/v1")
     ? `${baseUrl}/chat/completions`
     : `${baseUrl}/v1/chat/completions`;
 
-  const model = process.env.LOCAL_LLM_MODEL ?? "qwen";
+  const model = "qwen";
   const timeoutMs = input.timeoutMs ?? 60000;
 
   const controller = new AbortController();
@@ -195,29 +199,27 @@ export async function generateTaskPlan(input: TaskPlanRequestInput): Promise<Pro
           : "";
 
     if (!rawText.trim()) {
-      throw Object.assign(
-        new Error("Local Qwen returned an empty plan."),
-        { code: "invalid_response", status: 502 },
-      );
+      throw Object.assign(new Error("Local Qwen returned an empty plan."), {
+        code: "invalid_response",
+        status: 502,
+      });
     }
 
     let parsed: unknown;
     try {
       parsed = JSON.parse(extractJsonObject(rawText));
     } catch {
-      throw Object.assign(
-        new Error("Local Qwen did not return valid JSON."),
-        { code: "invalid_response", status: 502 },
-      );
+      throw Object.assign(new Error("Local Qwen did not return valid JSON."), {
+        code: "invalid_response",
+        status: 502,
+      });
     }
 
     try {
       return normalizeProviderResponse(parsed);
     } catch (error) {
       throw Object.assign(
-        new Error(
-          error instanceof Error ? error.message : "Local Qwen returned an invalid plan.",
-        ),
+        new Error(error instanceof Error ? error.message : "Local Qwen returned an invalid plan."),
         { code: "invalid_response", status: 502 },
       );
     }
@@ -227,10 +229,10 @@ export async function generateTaskPlan(input: TaskPlanRequestInput): Promise<Pro
     }
 
     if (controller.signal.aborted) {
-      throw Object.assign(
-        new Error("Local Qwen planning request timed out."),
-        { code: "timeout", status: 504 },
-      );
+      throw Object.assign(new Error("Local Qwen planning request timed out."), {
+        code: "timeout",
+        status: 504,
+      });
     }
 
     throw Object.assign(
@@ -266,7 +268,11 @@ export async function handleTaskPlanRequest(request: Request): Promise<Response>
     request.headers.get("origin") ?? request.headers.get("referer") ?? "headerless-client";
   if (isRateLimited(bucketKey)) {
     return Response.json(
-      { ok: false, code: "rate_limited", message: "Too many planning requests. Try again shortly." },
+      {
+        ok: false,
+        code: "rate_limited",
+        message: "Too many planning requests. Try again shortly.",
+      },
       { status: 429 },
     );
   }

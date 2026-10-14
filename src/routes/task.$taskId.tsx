@@ -15,7 +15,11 @@ import { useTicker } from "@/hooks/use-ticker";
 import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/task/$taskId")({
-  head: () => pageMeta("Task details", "Plan, steps, screenshots, errors and verification for one DesktopPilot task."),
+  head: () =>
+    pageMeta(
+      "Task details",
+      "Plan, steps, screenshots, errors and verification for one DesktopPilot task.",
+    ),
   component: TaskDetail,
 });
 
@@ -37,9 +41,14 @@ function TaskDetail() {
   if (!task)
     return (
       <div className="mx-auto max-w-3xl">
-        <EmptyState title="Task not found" hint="It may have been deleted. Go back to the task list." />
+        <EmptyState
+          title="Task not found"
+          hint="It may have been deleted. Go back to the task list."
+        />
         <div className="mt-4 text-center">
-          <Button asChild variant="secondary"><Link to="/tasks">All tasks</Link></Button>
+          <Button asChild variant="secondary">
+            <Link to="/tasks">All tasks</Link>
+          </Button>
         </div>
       </div>
     );
@@ -56,7 +65,9 @@ function TaskDetail() {
         actions={
           <div className="flex gap-2">
             <Button size="sm" variant="ghost" asChild>
-              <Link to="/tasks"><ArrowLeft className="h-4 w-4" /> All tasks</Link>
+              <Link to="/tasks">
+                <ArrowLeft className="h-4 w-4" /> All tasks
+              </Link>
             </Button>
             {task.status === "failed" || task.status === "cancelled" ? (
               <Button
@@ -88,7 +99,11 @@ function TaskDetail() {
             {task.steps.length ? (
               <ol className="space-y-1.5">
                 {task.steps.map((s, i) => {
-                  const state = s.done ? "done" : i === task.currentStep && isActive(task.status) ? "current" : "pending";
+                  const state = s.done
+                    ? "done"
+                    : i === task.currentStep && isActive(task.status)
+                      ? "current"
+                      : "pending";
                   return (
                     <li
                       key={s.id}
@@ -120,7 +135,10 @@ function TaskDetail() {
                 })}
               </ol>
             ) : (
-              <EmptyState title="No plan yet" hint="The plan appears here once the AI has made it." />
+              <EmptyState
+                title="No plan yet"
+                hint="The plan appears here once the AI has made it."
+              />
             )}
           </Panel>
           <Panel title="Verification & summary">
@@ -144,7 +162,8 @@ function TaskDetail() {
               {v?.reason ? <p className="text-xs text-muted-foreground">{v.reason}</p> : null}
               {task.summary ? <p className="text-xs">{task.summary}</p> : null}
               <p className="font-mono text-[10px] text-muted-foreground">
-                retries used {task.retries}/{task.maxRetries ?? 2} · plan changes {task.replans ?? 0}/3
+                retries used {task.retries}/{task.maxRetries ?? 2} · plan changes{" "}
+                {task.replans ?? 0}/3
               </p>
             </div>
           </Panel>

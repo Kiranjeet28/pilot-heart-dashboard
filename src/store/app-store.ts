@@ -243,13 +243,24 @@ async function checkAndAdapt(
   const stillVerifying = () => getTask(id)?.status === "verifying" && !state.emergencyStop;
   if (sim) {
     patchTask(id, {
-      lastCheck: { verdict: "ok", reason: "Simulated check", simulated: true, checkedAt: Date.now() },
+      lastCheck: {
+        verdict: "ok",
+        reason: "Simulated check",
+        simulated: true,
+        checkedAt: Date.now(),
+      },
     });
     log(id, "info", "Screen check (simulated): looks right — no screen sent to AI", true);
     return "continue";
   }
   if (!obs?.imageDataUrl || obs.simulated) {
-    log(id, "warning", "Could not tell — no real screenshot to check. Recorded as unverified.", false, true);
+    log(
+      id,
+      "warning",
+      "Could not tell — no real screenshot to check. Recorded as unverified.",
+      false,
+      true,
+    );
     return "continue";
   }
   if (checksPaused.has(id)) return "continue";
@@ -274,21 +285,37 @@ async function checkAndAdapt(
     );
   }
   patchTask(id, {
-    lastCheck: { verdict: check.verdict, reason: check.reason, simulated: false, checkedAt: Date.now() },
+    lastCheck: {
+      verdict: check.verdict,
+      reason: check.reason,
+      simulated: false,
+      checkedAt: Date.now(),
+    },
   });
   if (check.verdict === "ok") {
     log(id, "result", `Looks right: ${check.reason}`, false, true);
     return "continue";
   }
   if (check.verdict === "unsure") {
-    patchTask(id, { verification: { status: "unverified", reason: check.reason, checkedAt: Date.now() } });
-    log(id, "warning", `Could not tell: ${check.reason}. Recorded as unverified — continuing.`, false, true);
+    patchTask(id, {
+      verification: { status: "unverified", reason: check.reason, checkedAt: Date.now() },
+    });
+    log(
+      id,
+      "warning",
+      `Could not tell: ${check.reason}. Recorded as unverified — continuing.`,
+      false,
+      true,
+    );
     return "continue";
   }
   log(id, "warning", `Unexpected screen — adjusting plan: ${check.reason}`, false, true);
   const cur = getTask(id)!;
   if (!canReplan(cur.replans)) {
-    fail(id, `The screen was still off track after ${MAX_REPLANS} plan adjustments: ${check.reason}`);
+    fail(
+      id,
+      `The screen was still off track after ${MAX_REPLANS} plan adjustments: ${check.reason}`,
+    );
     return "handled";
   }
   const target = state.targets.find((x) => x.id === cur.targetId);
@@ -333,7 +360,11 @@ async function checkAndAdapt(
     fail(id, `Could not adjust the plan: ${merged.reason}`);
     return "handled";
   }
-  const before = cur.steps.slice(cur.currentStep + 1).map((s) => s.action.description).join(" → ") || "(nothing)";
+  const before =
+    cur.steps
+      .slice(cur.currentStep + 1)
+      .map((s) => s.action.description)
+      .join(" → ") || "(nothing)";
   const after = remaining.map((s) => s.action.description).join(" → ");
   const next = cur.currentStep + 1;
   transition(id, "running");
