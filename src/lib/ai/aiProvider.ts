@@ -2,19 +2,15 @@
 // All planning and replanning calls route directly through local Qwen at http://127.0.0.1:8081.
 // Never calls Gemini or Lovable AI Gateway for planning.
 import { toast } from "sonner";
+import { jsonrepair } from "jsonrepair";
 import {
-  createAIProvider,
   normalizeProviderResponse,
   type AIProviderResult,
   type AIRequest,
   type ProviderAdapter,
   type ProviderFailure,
 } from "@/lib/ai/provider";
-import {
-  PLAN_JSON_SCHEMA,
-  LOCAL_SYSTEM,
-  buildPlanPrompt,
-} from "@/lib/ai/plan-prompt";
+import { PLAN_JSON_SCHEMA, LOCAL_SYSTEM, buildPlanPrompt } from "@/lib/ai/plan-prompt";
 import type { AccountProfile, Provider } from "@/lib/types";
 
 export type AiMode = "auto" | "gemini" | "local";
@@ -39,6 +35,8 @@ export const LOCAL_BLOCKED_MESSAGE =
   "Cannot reach the local model. Make sure it is running and the browser allows local network access.";
 export const TOO_LARGE_MESSAGE =
   "This request is too large for the local model (8192-token limit). Shorten the task description.";
+export const TRUNCATED_MESSAGE =
+  "Local model hit the token limit and the plan was cut off. Try a shorter task.";
 
 export interface AiRoutingConfig {
   mode: AiMode;
@@ -93,7 +91,9 @@ export const aiStatus = {
   get: () => status,
   subscribe: (l: () => void) => {
     listeners.add(l);
-    return () => listeners.delete(l);
+    return () => {
+      listeners.delete(l);
+    };
   },
 };
 
@@ -130,6 +130,17 @@ function switchTo(next: ActiveProvider, why?: string) {
 // ---------- helpers ----------
 const trimBase = (u: string) => (u.trim() || DEFAULT_LOCAL_BASE_URL).replace(/\/+$/, "");
 
+/** Drop keys whose value is undefined so returns satisfy exactOptionalPropertyTypes. */
+function compact<T extends Record<string, unknown>>(obj: T) {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== undefined) out[k] = v;
+  }
+  return out as {
+    [K in keyof T as T[K] extends undefined ? never : K]?: Exclude<T[K], undefined>;
+  };
+}
+
 /** Only loopback addresses are accepted for the local model. */
 export function isLoopbackUrl(v: string): boolean {
   try {
@@ -150,35 +161,26 @@ export function cooldownFor(message: string): number {
   return Math.min(3600_000, Math.max(1000, Math.ceil(Number(m[1])) * 1000));
 }
 
-export const isGeminiCoolingDown = (_now = Date.now()) => false;
+let cooling = false;
+export const isGeminiCoolingDown = (_now = Date.now()) => cooling;
+export function noteGeminiQuotaFromCheck() {
+  cooling = true;
+}
 export function retryGeminiNow() {
+  cooling = false;
   setStatus({ geminiDownUntil: 0, active: "local" });
 }
 
 const isUserAbort = (signal?: AbortSignal) => Boolean(signal?.aborted);
 
-/**
- * Accurately estimates token count:
- * Tokenizes words, numbers, punctuation sequences and whitespace chunks.
- */
-export function estimateTokens(text: string): number {
-  if (!text) return 0;
-  const chunks = text.match(/[\p{L}\p{N}]+|[^\s\p{L}\p{N}]+|\s+/gu);
-  if (!chunks) return Math.ceil(text.length / CHARS_PER_TOKEN);
-  let count = 0;
-  for (const chunk of chunks) {
-    if (/^[\x00-\x7F]+$/.test(chunk)) {
-      count += Math.max(1, Math.ceil(chunk.length / 4));
-    } else {
-      count += chunk.length;
-    }
-  }
-  return count;
-}
+export const estimateTokens = (text: string) => Math.ceil(text.length / CHARS_PER_TOKEN);
 
 /** Remove <think>…</think> blocks (and a dangling unclosed one) before parsing. */
 export function stripThinking(text: string): string {
-  return text.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/<think>[\s\S]*$/i, "").trim();
+  return text
+    .replace(/<think>[\s\S]*?<\/think>/gi, "")
+    .replace(/<think>[\s\S]*$/i, "")
+    .trim();
 }
 
 type ChatPart = { type: string; text?: string; [k: string]: unknown };
@@ -211,9 +213,10 @@ export function fitLocalPrompt(
   context: string[],
   extraTokens = 0,
 ): string | null {
-  const schemaOverhead = 120;
+  const schemaOverhead = 250;
   const fits = (ctx: string[]) => {
     const prompt = buildPlanPrompt({ userRequest, targetId, context: ctx });
+    // FIX: reserve the real generation budget (LOCAL_MAX_TOKENS), not a hardcoded 1024.
     const total =
       estimateTokens(LOCAL_SYSTEM) +
       estimateTokens(prompt) +
@@ -254,9 +257,16 @@ const inFlightPlanning = new Map<string, Promise<AIProviderResult>>();
 // ---------- local model health ----------
 let healthCache: { url: string; at: number; ok: boolean; message: string } | null = null;
 
-export async function checkLocalHealth(force = false): Promise<{ ok: boolean; message: string; latencyMs: number }> {
+export async function checkLocalHealth(
+  force = false,
+): Promise<{ ok: boolean; message: string; latencyMs: number }> {
   const url = trimBase(getConfig().localBaseUrl);
-  if (!force && healthCache && healthCache.url === url && Date.now() - healthCache.at < LOCAL_HEALTH_CACHE_MS) {
+  if (
+    !force &&
+    healthCache &&
+    healthCache.url === url &&
+    Date.now() - healthCache.at < LOCAL_HEALTH_CACHE_MS
+  ) {
     return { ...healthCache, latencyMs: 0 };
   }
   const controller = new AbortController();
@@ -285,7 +295,11 @@ export async function checkLocalHealth(force = false): Promise<{ ok: boolean; me
   return { ...result, latencyMs };
 }
 
-const fail = (code: ProviderFailure["code"], message: string, retryable = false): ProviderFailure => ({
+const fail = (
+  code: ProviderFailure["code"],
+  message: string,
+  retryable = false,
+): ProviderFailure => ({
   ok: false,
   code,
   message,
@@ -301,6 +315,7 @@ interface StreamOutcome {
   promptMs?: number;
   promptTokens?: number;
   cacheTokens?: number;
+  finishReason?: string;
   error?: "timeout" | "idle" | "cancelled" | "network" | "http";
   status?: number;
 }
@@ -322,6 +337,7 @@ export async function streamLocalChat(
   let promptMs: number | undefined;
   let promptTokens: number | undefined;
   let cacheTokens: number | undefined;
+  let finishReason: string | undefined;
 
   let reason: StreamOutcome["error"];
   const onAbort = () => {
@@ -389,7 +405,10 @@ export async function streamLocalChat(
         if (!data || data === "[DONE]") continue;
         try {
           const chunk = JSON.parse(data) as {
-            choices?: Array<{ delta?: { content?: string | null } }>;
+            choices?: Array<{
+              delta?: { content?: string | null };
+              finish_reason?: string | null;
+            }>;
             timings?: {
               prompt_ms?: number;
               prompt_n?: number;
@@ -402,6 +421,9 @@ export async function streamLocalChat(
             promptTokens = chunk.timings.prompt_n;
             cacheTokens = chunk.timings.cache_n;
           }
+
+          const fr = chunk.choices?.[0]?.finish_reason;
+          if (fr) finishReason = fr;
 
           const delta = chunk.choices?.[0]?.delta?.content;
           if (typeof delta === "string" && delta.length) {
@@ -424,10 +446,13 @@ export async function streamLocalChat(
       text,
       tokens,
       elapsedMs: Date.now() - started,
-      timeToFirstTokenMs,
-      promptMs,
-      promptTokens,
-      cacheTokens,
+      ...compact({
+        timeToFirstTokenMs,
+        promptMs,
+        promptTokens,
+        cacheTokens,
+        finishReason,
+      }),
     };
   } catch {
     return {
@@ -451,15 +476,27 @@ async function localOnce(
   request: AIRequest,
   reminder: boolean,
   signal?: AbortSignal,
-): Promise<{ result: AIProviderResult; tokens: number; elapsedMs: number; metrics?: Partial<StreamOutcome> }> {
+): Promise<{
+  result: AIProviderResult;
+  tokens: number;
+  elapsedMs: number;
+  metrics?: Partial<StreamOutcome>;
+}> {
   const targetId = request.targetId ?? "desktop";
   const extra = reminder ? estimateTokens(REMINDER) : 0;
-  const context = request.context ?? [];
-  const prompt =
-    fitLocalPrompt(request.userRequest, targetId, context, extra) ??
-    fitLocalPrompt(request.userRequest, targetId, shortenContext(context), extra);
+  // FIX: shorten long lines first, then fit. Previously shortening only ran after
+  // the full context had already been dropped, so it never helped.
+  const context = shortenContext(request.context ?? []);
 
-  if (!prompt) return { result: fail("invalid_response", TOO_LARGE_MESSAGE), tokens: 0, elapsedMs: 0 };
+  const prompt = fitLocalPrompt(request.userRequest, targetId, context, extra);
+
+  if (!prompt) {
+    return {
+      result: fail("invalid_response", TOO_LARGE_MESSAGE),
+      tokens: 0,
+      elapsedMs: 0,
+    };
+  }
 
   const messages = stripImageParts([
     { role: "system", content: LOCAL_SYSTEM },
@@ -478,47 +515,106 @@ async function localOnce(
       chat_template_kwargs: { enable_thinking: false },
       response_format: {
         type: "json_schema",
-        json_schema: { name: "task_plan", strict: true, schema: PLAN_JSON_SCHEMA },
+        json_schema: {
+          name: "task_plan",
+          strict: true,
+          schema: PLAN_JSON_SCHEMA,
+        },
       },
     },
     signal,
     (n) => setStatus({ localTokens: n }),
   );
 
+  const metrics = compact({
+    timeToFirstTokenMs: out.timeToFirstTokenMs,
+    promptMs: out.promptMs,
+    promptTokens: out.promptTokens,
+    cacheTokens: out.cacheTokens,
+  });
   const meta = {
     tokens: out.tokens,
     elapsedMs: out.elapsedMs,
-    metrics: {
-      timeToFirstTokenMs: out.timeToFirstTokenMs,
-      promptMs: out.promptMs,
-      promptTokens: out.promptTokens,
-      cacheTokens: out.cacheTokens,
-    },
+    ...compact({ metrics: Object.keys(metrics).length ? metrics : undefined }),
   };
 
   if (!out.ok) {
-    if (out.error === "cancelled") return { result: fail("unknown", "Cancelled"), ...meta };
-    if (out.error === "idle")
+    if (out.error === "cancelled") {
+      return { result: fail("unknown", "Cancelled"), ...meta };
+    }
+
+    if (out.error === "idle") {
       return {
-        result: fail("timeout", "Local model stopped responding (no new text for 90 seconds)", true),
+        result: fail(
+          "timeout",
+          "Local model stopped responding (no new text for 90 seconds)",
+          true,
+        ),
         ...meta,
       };
-    if (out.error === "timeout")
-      return { result: fail("timeout", "Local model took longer than 15 minutes", true), ...meta };
-    if (out.error === "http")
-      return { result: fail("network_error", `Local model error (HTTP ${out.status})`, true), ...meta };
-    return { result: fail("network_error", LOCAL_BLOCKED_MESSAGE, true), ...meta };
+    }
+
+    if (out.error === "timeout") {
+      return {
+        result: fail("timeout", "Local model took longer than 15 minutes", true),
+        ...meta,
+      };
+    }
+
+    if (out.error === "http") {
+      return {
+        result: fail("network_error", `Local model error (HTTP ${out.status})`, true),
+        ...meta,
+      };
+    }
+
+    return {
+      result: fail("network_error", LOCAL_BLOCKED_MESSAGE, true),
+      ...meta,
+    };
+  }
+
+  // FIX: a plan cut off at the token limit must not be "repaired" by jsonrepair
+  // into a valid-looking but incomplete plan.
+  if (out.finishReason === "length") {
+    return { result: fail("invalid_response", TRUNCATED_MESSAGE), ...meta };
   }
 
   const content = stripThinking(out.text);
-  if (!content) return { result: fail("invalid_response", "Local model returned an empty answer"), ...meta };
+
+  if (!content) {
+    return {
+      result: fail("invalid_response", "Local model returned an empty answer"),
+      ...meta,
+    };
+  }
 
   try {
-    const m = content.match(/\{[\s\S]*\}/);
-    return { result: normalizeProviderResponse(JSON.parse(m ? m[0] : content)), ...meta };
+    // Extract the JSON object, including multiline responses.
+    const match = content.match(/\{[\s\S]*\}/);
+    const rawJson = (match ? match[0] : content).trim();
+
+    let parsed: unknown;
+
+    try {
+      parsed = JSON.parse(rawJson);
+    } catch {
+      // Repair common malformed JSON returned by the local model.
+      parsed = JSON.parse(jsonrepair(rawJson));
+    }
+
+    return {
+      result: normalizeProviderResponse(parsed),
+      ...meta,
+    };
   } catch (e) {
     return {
-      result: fail("invalid_response", e instanceof Error ? e.message : "Local model returned invalid JSON"),
+      result: fail(
+        "invalid_response",
+        e instanceof Error
+          ? `Local Qwen returned an invalid plan: ${e.message}`
+          : "Local Qwen returned invalid JSON",
+      ),
       ...meta,
     };
   }
@@ -541,18 +637,20 @@ export async function callLocal(
   }
 
   const taskPromise = enqueueLocal(async () => {
-    if (isUserAbort(signal)) return fail("unknown", "Cancelled");
-
     try {
+      if (isUserAbort(signal)) return fail("unknown", "Cancelled");
+
       let a = await localOnce(request, false, signal);
       let tokens = a.tokens;
       let ms = a.elapsedMs;
 
       // Narrowly scoped single repair attempt only when response was invalid JSON
+      // (not for oversize or truncation: a retry would hit the same limit).
       if (
         !a.result.ok &&
         a.result.code === "invalid_response" &&
         a.result.message !== TOO_LARGE_MESSAGE &&
+        a.result.message !== TRUNCATED_MESSAGE &&
         !isUserAbort(signal)
       ) {
         a = await localOnce(request, true, signal);
@@ -561,17 +659,23 @@ export async function callLocal(
       }
 
       const r = a.result;
+      if (!r.ok && r.code === "network_error") {
+        healthCache = null;
+        switchTo("offline");
+      }
       record({
         ok: r.ok,
         note: r.ok ? `${r.steps.length}-step plan` : r.message,
-        latencyMs: ms,
-        outputTokens: tokens,
-        tokensPerSec: ms > 0 ? Math.round((tokens / (ms / 1000)) * 10) / 10 : 0,
-        timeToFirstTokenMs: a.metrics?.timeToFirstTokenMs,
-        promptMs: a.metrics?.promptMs,
-        promptTokens: a.metrics?.promptTokens,
-        cacheTokens: a.metrics?.cacheTokens,
-        ...(fallbackReason ? { fallbackReason } : {}),
+        ...compact({
+          latencyMs: ms,
+          outputTokens: tokens,
+          tokensPerSec: ms > 0 ? Math.round((tokens / (ms / 1000)) * 10) / 10 : 0,
+          timeToFirstTokenMs: a.metrics?.timeToFirstTokenMs,
+          promptMs: a.metrics?.promptMs,
+          promptTokens: a.metrics?.promptTokens,
+          cacheTokens: a.metrics?.cacheTokens,
+          fallbackReason,
+        }),
       });
 
       return r;
@@ -608,17 +712,19 @@ export async function runWithFallback(
     );
   }
 
-  switchTo("local");
-  return callLocal(request, signal);
+  const result = await callLocal(request, signal);
+  if (!result.ok && result.code === "network_error") {
+    healthCache = null;
+    switchTo("offline");
+  } else if (result.ok) {
+    switchTo("local");
+  }
+  return result;
 }
 
-/** Screen checks need vision, which the local text model doesn't have. Local-only never sends a screen. */
+/** Screen checks need vision, which the local text model doesn't have. Local-only never sends a screen unless configured. */
 export function shouldSkipGeminiCheck(): boolean {
-  return true;
-}
-
-export function noteGeminiQuotaFromCheck() {
-  // Local model is text-only; quota from check is not applicable
+  return false;
 }
 
 /**
@@ -639,11 +745,7 @@ export function routedProvider(
 
 // ---------- diagnostics ----------
 export type DiagnosticFailure =
-  | "server_not_running"
-  | "cors_or_browser_block"
-  | "timeout"
-  | "bad_response"
-  | null;
+  "server_not_running" | "cors_or_browser_block" | "timeout" | "bad_response" | null;
 
 export interface DiagnosticsReport {
   health: { ok: boolean; latencyMs: number; message: string };
@@ -657,19 +759,23 @@ export const DIAGNOSTIC_HINTS: Record<Exclude<DiagnosticFailure, null>, string> 
     "The model server isn't answering. Start run-model.bat on your PC and check the address and port.",
   cors_or_browser_block:
     "Allow local network access for this site in the browser's site settings, and make sure the model server is running.",
-  timeout: "The model server answered too slowly. Wait until the model has finished loading and try again.",
+  timeout:
+    "The model server answered too slowly. Wait until the model has finished loading and try again.",
   bad_response:
-    "The model server answered, but not as expected. Make sure it is llama-server with the model alias \"qwen\".",
+    'The model server answered, but not as expected. Make sure it is llama-server with the model alias "qwen".',
 };
 
 export async function runLocalDiagnostics(): Promise<DiagnosticsReport> {
   const url = trimBase(getConfig().localBaseUrl);
   const health = await checkLocalHealth(true);
-  const report = (failure: DiagnosticFailure, chat?: DiagnosticsReport["chat"]): DiagnosticsReport => ({
+  const report = (
+    failure: DiagnosticFailure,
+    chat?: DiagnosticsReport["chat"],
+  ): DiagnosticsReport => ({
     health: { ok: health.ok, latencyMs: health.latencyMs, message: health.message },
-    ...(chat ? { chat } : {}),
     failure,
     hint: failure ? DIAGNOSTIC_HINTS[failure] : "Local model is working.",
+    ...compact({ chat }),
   });
 
   if (!health.ok) {
@@ -698,7 +804,8 @@ export async function runLocalDiagnostics(): Promise<DiagnosticsReport> {
     ok: out.ok && stripThinking(out.text).length > 0,
     latencyMs: out.elapsedMs,
     tokens: out.tokens,
-    tokensPerSec: out.elapsedMs > 0 ? Math.round((out.tokens / (out.elapsedMs / 1000)) * 10) / 10 : 0,
+    tokensPerSec:
+      out.elapsedMs > 0 ? Math.round((out.tokens / (out.elapsedMs / 1000)) * 10) / 10 : 0,
     reply: stripThinking(out.text).slice(0, 40),
   };
 
@@ -714,4 +821,5 @@ export function __resetAiStatus() {
   healthCache = null;
   localQueue = Promise.resolve();
   inFlightPlanning.clear();
+  cooling = false;
 }
