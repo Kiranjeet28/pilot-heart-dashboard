@@ -175,4 +175,8 @@ export interface AppSettings {
   workerPort: number;
   /** Module 4: check the screen after each step and adjust the plan if needed. */
   adaptiveChecks: boolean;
+  /** AI routing: auto (Gemini, local fallback), gemini only, or local only. */
+  aiMode: "auto" | "gemini" | "local";
+  /** Base URL of the local llama.cpp server on the user's PC. */
+  localBaseUrl: string;
 }

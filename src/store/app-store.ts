@@ -20,7 +20,7 @@ import {
 } from "@/lib/registry/defaults";
 import { canTransition, isActive } from "@/lib/tasks/state-machine";
 import { normalizeProviderPlan } from "@/lib/tasks/planner";
-import { createAIProvider, MockAIProvider } from "@/lib/ai/provider";
+import { MockAIProvider } from "@/lib/ai/provider";
 import { verifyActionOutcome } from "@/lib/tasks/verification";
 import {
   MAX_REPLANS,
@@ -33,6 +33,7 @@ import {
   shouldCheckAfter,
 } from "@/lib/tasks/adapt";
 import { requestStepCheck } from "@/lib/ai/step-check-client";
+import { configureAiRouting, routedProvider } from "@/lib/ai/aiProvider";
 import { validateAction } from "@/lib/worker/action-validation";
 import { MockDesktopWorker } from "@/lib/worker/mock-worker";
 import type { ActionResult, DesktopWorker, ObservationResult } from "@/lib/worker/worker";
@@ -138,6 +139,10 @@ export const localWorker = new LocalHttpWorker({
   port: () => state.settings.workerPort,
   getToken: () => readSession()?.token ?? null,
 });
+configureAiRouting(() => ({
+  mode: state.settings.aiMode,
+  localBaseUrl: state.settings.localBaseUrl,
+}));
 const isReal = () => state.settings.workerMode === "real_local";
 export const currentWorker = (): DesktopWorker => (isReal() ? localWorker : mockWorker);
 
@@ -284,7 +289,7 @@ async function checkAndAdapt(
     return "handled";
   }
   const ask = () =>
-    createAIProvider(provider, profile).getNextStep({
+    routedProvider(provider, profile).getNextStep({
       taskId: id,
       userRequest: cur.description,
       targetId: cur.targetId,
@@ -401,7 +406,7 @@ async function tick(id: string) {
             provider,
             profile,
           })
-        : await createAIProvider(provider, profile).getNextStep({
+        : await routedProvider(provider, profile).getNextStep({
             taskId: id,
             userRequest: t.description,
             targetId: t.targetId,
@@ -637,6 +642,8 @@ export const actions = {
             workerMode: settings.workerMode ?? "demo",
             workerPort: settings.workerPort ?? DEFAULT_SETTINGS.workerPort,
             adaptiveChecks: settings.adaptiveChecks ?? DEFAULT_SETTINGS.adaptiveChecks,
+            aiMode: settings.aiMode ?? DEFAULT_SETTINGS.aiMode,
+            localBaseUrl: settings.localBaseUrl ?? DEFAULT_SETTINGS.localBaseUrl,
           }
         : DEFAULT_SETTINGS,
       emergencyStop: settings?.emergencyStop ?? false,
