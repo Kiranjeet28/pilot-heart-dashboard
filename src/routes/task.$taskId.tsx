@@ -63,7 +63,10 @@ function TaskDetail() {
                 size="sm"
                 onClick={() => {
                   const r = actions.retry(task.id);
-                  if (!r.ok) return toast.error(r.issues[0]);
+                  if (!r.ok) {
+                    toast.error(r.issues[0]);
+                    return;
+                  }
                   navigate({ to: "/task/$taskId", params: { taskId: r.id } });
                 }}
               >
@@ -107,7 +110,7 @@ function TaskDetail() {
                         </p>
                         <p className="font-mono text-[10px] text-muted-foreground">
                           {s.action.kind}
-                          {s.action.key ? ` · ${s.action.key}` : ""}
+                          {s.action.keys ? ` · ${String(s.action.keys)}` : ""}
                           {s.action.text ? ` · “${s.action.text.slice(0, 60)}”` : ""}
                           {s.verification ? ` · check: ${s.verification.kind}` : ""}
                         </p>
