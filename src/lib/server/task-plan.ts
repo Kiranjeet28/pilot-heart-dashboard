@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { normalizeProviderResponse, type ProviderResult } from "@/lib/ai/provider";
+import { PLAN_JSON_SCHEMA, buildPlanPrompt as buildPrompt } from "@/lib/ai/plan-prompt";
 
 export interface TaskPlanRequestInput {
   taskId?: string | undefined;
@@ -97,69 +98,6 @@ const GATEWAY_CHAT_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
 const LOVABLE_AIG_RUN_ID_HEADER = "X-Lovable-AIG-Run-ID";
 const MAX_PLAN_TOKENS = 800;
 
-/** Strict JSON schema the model must emit; verified again by responseSchema on the way out. */
-const PLAN_JSON_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: ["plan", "summary", "steps"],
-  properties: {
-    plan: { type: "array", maxItems: 12, items: { type: "string" } },
-    summary: { type: "string" },
-    steps: {
-      type: "array",
-      maxItems: 12,
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["action", "requiresApproval"],
-        properties: {
-          action: {
-            type: "object",
-            additionalProperties: false,
-            required: ["kind", "targetId", "description"],
-            properties: {
-              kind: {
-                type: "string",
-                enum: [
-                  "focus_window",
-                  "read_screen",
-                  "click",
-                  "type_text",
-                  "key_press",
-                  "wait",
-                  "copy_selection",
-                  "paste",
-                ],
-              },
-              targetId: { type: "string" },
-              description: { type: "string" },
-              text: { type: "string" },
-              x: { type: "integer" },
-              y: { type: "integer" },
-              keys: { type: "string" },
-              durationMs: { type: "integer" },
-              observationId: { type: "string" },
-            },
-          },
-          requiresApproval: { type: "boolean" },
-          verification: {
-            type: "object",
-            additionalProperties: false,
-            required: ["kind"],
-            properties: {
-              kind: {
-                type: "string",
-                enum: ["worker_ok", "screen_capture", "text_match", "clipboard"],
-              },
-              expectedText: { type: "string" },
-              allowPartial: { type: "boolean" },
-            },
-          },
-        },
-      },
-    },
-  },
-} as const;
 
 /**
  * Gemini's native responseSchema is an OpenAPI subset that rejects
@@ -287,28 +225,6 @@ function cleanedFallback(raw: string): string {
   if (!normalized) return "{}";
   if (normalized.startsWith("{") || normalized.startsWith("[")) return normalized;
   return JSON.stringify({ plan: [normalized], summary: normalized.slice(0, 200) });
-}
-
-function buildPrompt(input: TaskPlanRequestInput): string {
-  const safeRequest = input.userRequest.trim();
-  const targetLine = `Selected desktop target ID: ${input.targetId ?? "desktop"}. Every action's targetId MUST be exactly this value.`;
-  const contextText = input.context?.length
-    ? `\nContext:\n${input.context.map((item) => `- ${item}`).join("\n")}`
-    : "";
-  return [
-    "Return only valid JSON with this exact shape:",
-    "{",
-    '  "plan": ["step 1 description", "step 2 description"],',
-    '  "summary": "short summary",',
-    '  "steps": [{ "action": { "kind": "read_screen", "targetId": "<selected target id>", "description": "inspect the desktop" }, "requiresApproval": false, "verification": { "kind": "screen_capture" } }]',
-    "}",
-    "Choose only safe desktop actions from this allowlist: focus_window, read_screen, click, type_text, key_press, wait, copy_selection, paste.",
-    targetLine,
-    `Task: ${safeRequest}${contextText}`,
-    "Verification kinds: worker_ok and screen_capture are always allowed. Use text_match only when you also provide expectedText for text you know will appear on screen. Use clipboard only for copy_selection steps. Never invent verification evidence.",
-    "Keep the plan bounded to at most 12 steps and realistic for DesktopPilot. Include verification for every step and avoid unsafe or destructive actions.",
-    "The response must be parseable by JSON.parse without commentary or markdown fences.",
-  ].join("\n");
 }
 
 // ---------- Direct Gemini fallback (local runs without the Lovable gateway) ----------
