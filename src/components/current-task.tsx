@@ -6,6 +6,7 @@ import { actions, useAppState } from "@/store/app-store";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Panel, EmptyState } from "./panel";
+import { LocalThinkingNote } from "./ai-routing";
 import { TaskStatusBadge, SimulatedTag, RealTag } from "./status-badge";
 
 export function CurrentTask({ task }: { task?: Task | undefined }) {
@@ -106,6 +107,7 @@ export function CurrentTask({ task }: { task?: Task | undefined }) {
         </div>
       ) : null}
 
+      <LocalThinkingNote />
       {task.error ? (
         <p className="mt-3 rounded border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
           {task.error}

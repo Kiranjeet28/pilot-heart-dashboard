@@ -218,3 +218,17 @@ Limits: at most 3 plan adjustments per task, 20 steps in total, and 15 seconds p
 **Privacy:** while this is on, screenshots of your screen are sent to Google Gemini (through Lovable AI, or with your `GEMINI_API_KEY` when you run locally). They are never saved. Turn it off in **Settings → See and adapt**. Demo mode only shows simulated checks.
 
 **Manual test (on your PC):** pair the helper, set the target to Notepad, and run "Open Notepad and type hello". Approve the plan, then close Notepad right after it opens. The timeline should show "Unexpected screen — adjusting plan", then "Plan adjusted (1/3)", and the task should reopen Notepad and finish. Also press Stop during "Checking the screen…" to confirm it halts.
+
+## Local model fallback (llama.cpp)
+
+When Gemini fails (quota, server error, network, bad answer), the dashboard can plan with a model running on your own PC.
+
+1. Start `llama-server` with the model alias `qwen` (for example via your `run-model.bat`).
+2. Open **Settings → AI provider**. Pick **Auto** (Gemini first, then local), **Gemini only**, or **Local only**. Then press **Test local model**.
+3. The header badge shows which AI is answering: **Gemini** (green), **Local** (blue), or **Offline** (red).
+
+After a Gemini failure, the app uses the local model for 5 minutes, or for the wait time Google gives. After that it tries Gemini again.
+
+**Port clash:** llama-server and the local dashboard both use port 8080 by default. If you run the dashboard on your PC, start llama-server on another port (`--port 8081`) and set the address to `http://127.0.0.1:8081`.
+
+**Limits:** the local model can't see screenshots, so screen checks are skipped while it's in use. Plans are slow on CPU (up to 5 minutes). The same safety checks apply to every local plan.

@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Panel, PageHeader } from "@/components/panel";
 import { WorkerModePanel, PairingPanel, SetupGuide } from "@/components/worker-setup";
 import { NotepadTestPanel } from "@/components/notepad-test";
+import { AiRoutingPanel } from "@/components/ai-routing";
 
 export const Route = createFileRoute("/settings")({
   head: () =>
@@ -95,6 +96,7 @@ function SettingsPage() {
           </div>
         </Panel>
       ) : null}
+      <AiRoutingPanel />
       <Panel title="See and adapt">
         <div className="flex items-center justify-between gap-4">
           <Label htmlFor="adapt" className="flex flex-col items-start gap-1">

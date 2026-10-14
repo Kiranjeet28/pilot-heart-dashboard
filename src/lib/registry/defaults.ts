@@ -96,4 +96,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   workerMode: "demo",
   workerPort: 8765,
   adaptiveChecks: true,
+  aiMode: "auto",
+  localBaseUrl: "http://127.0.0.1:8080",
 };
