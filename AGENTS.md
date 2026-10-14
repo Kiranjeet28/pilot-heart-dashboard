@@ -30,3 +30,8 @@
 - Check failures become `unsure` (unverified, continue) — never a silent pass. Only `off_track` replans, through the existing plan route with "continue from here" context.
 - Replanned steps must pass `isWithinApprovedScope` (src/lib/tasks/adapt.ts: same target, approved kinds/keys/typed text; wait/read_screen always allowed) or the task fails — the single pre-start approval stays the only prompt. Limits: 3 replans, 20 steps, 15 s per check.
 - DEMO mode logs simulated checks only and never sends a screen to the AI.
+
+## AI provider routing
+- Every planning call goes through `runWithFallback` (src/lib/ai/aiProvider.ts, used via `routedProvider` in the store): Gemini via `/api/tasks/plan` first, then the user's local llama.cpp server called from the browser (it only listens on the user's PC). Gemini keys stay server-side.
+- The planning prompt/schema lives in src/lib/ai/plan-prompt.ts so Gemini and the local model ask for the same format; local plans still pass `normalizeProviderPlan` + `validateAction`.
+- The local model is text-only: screen checks are skipped (`unsure`) while Gemini is unavailable — never faked.
