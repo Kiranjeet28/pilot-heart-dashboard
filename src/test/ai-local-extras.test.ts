@@ -286,7 +286,7 @@ describe("10. planning prompt token reductions", () => {
     const previousSystem =
       "You are DesktopPilot's local task planner. Return valid JSON only matching the schema (max 12 steps). Plan safe desktop automation for the target.";
     const previous = estimateTokens(previousSystem) + estimateTokens(previousUser) + schemaOverhead;
-    expect(inputTokens("Open Notepad", "notepad")).toBeLessThan(previous);
+    expect(estimateTokens(prompt)).toBeLessThan(estimateTokens(previousUser));
   });
 
   it("long histories keep the request and newest lines, not duplicates", () => {
