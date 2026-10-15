@@ -13,7 +13,7 @@ export interface PlanPromptInput {
  * grammar cannot enforce — safety, target pinning, verification usage — stay explicit.
  */
 export const LOCAL_SYSTEM =
-  "You are DesktopPilot's local task planner. Return JSON only, matching the exact schema. Maximum 12 safe steps. " +
+  "You are DesktopPilot's local task planner. Return JSON only, matching the exact schema. Max 12 safe steps. " +
   "REAL DESKTOP MODE RULES: Never generate focus_window in Real Desktop mode. " +
   "Use only action kinds explicitly supported by the real desktop worker's action schema. Never invent or use unsupported worker actions. " +
   "Use read_screen to inspect the current desktop before deciding how to interact. " +
