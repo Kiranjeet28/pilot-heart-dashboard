@@ -120,3 +120,74 @@ export function validateTaskDecomposition(
 
     return { chunks };
 }
+
+import type { ProviderResult } from "@/lib/ai/provider";
+import type { TaskPlanRequestInput } from "@/lib/server/task-plan";
+
+export const TASK_DECOMPOSITION_SCHEMA = {
+    type: "object",
+    additionalProperties: false,
+    required: ["chunks"],
+    properties: {
+        chunks: {
+            type: "array",
+            minItems: 1,
+            maxItems: PLAN_CHUNK_MAX_COUNT,
+            items: {
+                type: "object",
+                additionalProperties: false,
+                required: ["id", "description", "dependsOn"],
+                properties: {
+                    id: { type: "string" },
+                    description: { type: "string" },
+                    dependsOn: {
+                        type: "array",
+                        items: { type: "string" },
+                    },
+                },
+            },
+        },
+    },
+} as const;
+
+export function buildDecompositionPrompt(
+    input: TaskPlanRequestInput,
+): string {
+    return [
+        "Divide the user's desktop task into small planning chunks.",
+        "Return JSON matching the provided schema only.",
+        "Preserve the original task intent and selected target.",
+        "Use dependencies when one chunk requires another to finish first.",
+        "Do not invent screen coordinates or claim actions have been executed.",
+        `Selected target: ${input.targetId ?? "desktop"}`,
+        `User task: ${input.userRequest}`,
+        ...(input.context?.length
+            ? ["Context:", ...input.context.map((line) => `- ${line}`)]
+            : []),
+    ].join("\n");
+}
+
+export function mergeChunkPlans(
+    plans: Array<{ chunkId: string; result: ProviderResult }>,
+): ProviderResult {
+    const steps = plans.flatMap(({ result }) => result.steps);
+
+    if (steps.length === 0) {
+        throw new Error("Chunk planning returned no executable steps.");
+    }
+
+    if (steps.length > PLAN_MAX_TOTAL_STEPS) {
+        throw new Error(
+            `Combined plan exceeds the ${PLAN_MAX_TOTAL_STEPS}-step limit.`,
+        );
+    }
+
+    return {
+        ok: true,
+        plan: plans.flatMap(({ result }) => result.plan),
+        summary: plans.map(({ result }) => result.summary).join(" "),
+        steps,
+        requiresApproval: steps.some((step) => step.requiresApproval),
+        nextAction: steps[0]?.action ?? null,
+    };
+}

@@ -6,7 +6,8 @@ import {
     PLAN_MAX_TOTAL_STEPS,
     validateTaskDecomposition,
 } from "@/lib/server/task-plan-orchestrator";
-
+import { mergeChunkPlans } from "@/lib/server/task-plan-orchestrator";
+import type { ProviderResult } from "@/lib/ai/provider";
 describe("task plan orchestration foundation", () => {
     it("uses the configured planning limits", () => {
         expect(PLAN_CHUNK_MAX_OUTPUT_TOKENS).toBe(500);
@@ -83,4 +84,31 @@ describe("task plan orchestration foundation", () => {
             }),
         ).toThrow(/between 1 and 8 chunks/i);
     });
+});
+it("merges chunk plans in the supplied order", () => {
+    const makePlan = (description: string): ProviderResult => ({
+        ok: true,
+        plan: [description],
+        summary: description,
+        steps: [
+            {
+                action: {
+                    kind: "read_screen",
+                    targetId: "desktop",
+                    description,
+                },
+                requiresApproval: false,
+                verification: { kind: "screen_capture" },
+            },
+        ],
+    });
+
+    const merged = mergeChunkPlans([
+        { chunkId: "first", result: makePlan("Inspect screen") },
+        { chunkId: "second", result: makePlan("Verify screen") },
+    ]);
+
+    expect(merged.steps).toHaveLength(2);
+    expect(merged.steps[0]?.action.description).toBe("Inspect screen");
+    expect(merged.steps[1]?.action.description).toBe("Verify screen");
 });
