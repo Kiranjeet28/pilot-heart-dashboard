@@ -151,7 +151,7 @@ export async function generateTaskPlan(input: TaskPlanRequestInput): Promise<Pro
         model,
         stream: false,
         temperature: 0.2,
-        max_tokens: 700,
+        max_tokens: 500,
         chat_template_kwargs: { enable_thinking: false },
         response_format: {
           type: "json_schema",

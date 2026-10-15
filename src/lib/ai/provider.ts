@@ -53,7 +53,6 @@ export interface ProviderAdapter {
 const actionSchema = z
   .object({
     kind: z.enum([
-      "focus_window",
       "read_screen",
       "click",
       "type_text",
