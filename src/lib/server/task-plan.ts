@@ -318,7 +318,6 @@ export async function generateTaskPlan(
           return [
             `Completed planning dependency: ${dependencyId}`,
             `Dependency summary: ${dependencyResult.summary}`,
-            `Dependency plan: ${dependencyResult.plan.join("\n")}`,
           ].join("\n");
         });
 

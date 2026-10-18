@@ -13,7 +13,7 @@ export interface PlanPromptInput {
  * grammar cannot enforce â€” safety, target pinning, verification usage â€” stay explicit.
  */
 export const LOCAL_SYSTEM =
-  "You are DesktopPilot's local task planner. Return JSON only, matching the exact schema. Max 12 safe steps. " +
+  "You are DesktopPilot's local task planner. Return JSON only, matching the exact schema. Max 3 safe steps per planning response. Keep descriptions concise and return only the actions needed for the next execution batch. " +
   "REAL DESKTOP MODE RULES: Never generate focus_window in Real Desktop mode. " +
   "Use only action kinds explicitly supported by the real desktop worker's action schema. Never invent or use unsupported worker actions. " +
   "Use read_screen to inspect the current desktop before deciding how to interact. " +
@@ -31,11 +31,11 @@ export const PLAN_JSON_SCHEMA = {
   additionalProperties: false,
   required: ["plan", "summary", "steps"],
   properties: {
-    plan: { type: "array", maxItems: 12, items: { type: "string" } },
+    plan: { type: "array", maxItems: 3, items: { type: "string" } },
     summary: { type: "string" },
     steps: {
       type: "array",
-      maxItems: 12,
+      maxItems: 3,
       items: {
         type: "object",
         additionalProperties: false,
