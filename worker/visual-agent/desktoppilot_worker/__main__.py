@@ -79,7 +79,7 @@ def cmd_run(config_path: str) -> int:
     print(f" {NAME} {VERSION}")
     print(f" Listening on http://{BIND_HOST}:{cfg.port} (local only)")
     print(f" Allowed dashboard origins: {', '.join(cfg.allowed_origins)}")
-    print(f" PAIRING CODE: {pairing.display}   (single use, expires in 5 minutes)")
+    print(f" PAIRING CODE: {pairing.display}   (single use, expires in 30 minutes)")
     print(" Emergency: Ctrl+C here, or move the mouse into a screen corner.")
     print("=" * 60)
     uvicorn.run(app, host=BIND_HOST, port=cfg.port, log_config=None, access_log=False, server_header=False)

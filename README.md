@@ -79,7 +79,7 @@ Start it:
 .\.venv\Scripts\python.exe -m desktoppilot_worker run --config config.json
 ```
 
-The console prints a one-time **PAIRING CODE** (valid for 5 minutes, single use).
+The console prints a one-time **PAIRING CODE** (valid for 30 minutes, single use).
 
 ## 3. Pair the dashboard
 
@@ -227,8 +227,8 @@ When Gemini fails (quota, server error, network, bad answer), the dashboard can 
 2. Open **Settings → AI provider**. Pick **Auto** (Gemini first, then local), **Gemini only**, or **Local only**. Then press **Test local model**.
 3. The header badge shows which AI is answering: **Gemini** (green), **Local** (blue), or **Offline** (red).
 
-After a Gemini failure, the app uses the local model for 5 minutes, or for the wait time Google gives. After that it tries Gemini again.
+After a Gemini failure, the app uses the local model for 30 minutes, or for the wait time Google gives. After that it tries Gemini again.
 
 **Port clash:** llama-server and the local dashboard both use port 8080 by default. If you run the dashboard on your PC, the app now expects llama-server on port 8081 — start it with `--port 8081`.
 
-**Limits:** the local model can't see screenshots, so screen checks are skipped while it's in use. Plans are slow on CPU (up to 5 minutes). The same safety checks apply to every local plan.
+**Limits:** the local model can't see screenshots, so screen checks are skipped while it's in use. Plans are slow on CPU (up to 30 minutes). The same safety checks apply to every local plan.
