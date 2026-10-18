@@ -9,6 +9,7 @@ const TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
     "awaiting_approval",
     "awaiting_input",
     "verifying",
+    "planning",
     "paused",
     "completed",
     "failed",

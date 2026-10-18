@@ -358,7 +358,10 @@ export interface TaskBatchExecutionHandlers {
     isDeadlineExceeded?: () => boolean;
     requiresApproval?: (step: unknown) => boolean;
     onApprovalRequired?: (step: unknown) => Promise<boolean>;
+    onBatchStart?: (batchIndex: number, result: ProviderResult) => void;
     onBatchComplete?: (batchIndex: number, result: ProviderResult) => void;
+    onActionStart?: (step: unknown, actionIndex: number) => void;
+    onActionComplete?: (step: unknown, actionIndex: number, result: { ok: boolean; message?: string }) => void;
     isTaskComplete?: (state: TaskBatchExecutionState) => boolean;
     getRemainingObjective?: (state: TaskBatchExecutionState, planResult: ProviderResult) => string;
 }
@@ -476,6 +479,9 @@ export async function orchestrateTaskBatches(
             }
         }
 
+        // Notify batch start after full-batch validation passes.
+        handlers.onBatchStart?.(batchesExecuted + 1, planResult);
+
         // 4. Execute only validated actions, using existing worker safety checks.
         for (const step of batchSteps) {
             if (handlers.isCancelled?.()) {
@@ -566,6 +572,8 @@ export async function orchestrateTaskBatches(
                 }
             }
 
+            handlers.onActionStart?.(step, totalActionsExecuted);
+
             let actionResult = await handlers.executeAction(step.action);
             if (!actionResult.ok && (options?.maxRetriesPerAction ?? 0) > 0) {
                 const maxR = options!.maxRetriesPerAction!;
@@ -576,6 +584,8 @@ export async function orchestrateTaskBatches(
                     actionResult = await handlers.executeAction(step.action);
                 }
             }
+
+            handlers.onActionComplete?.(step, totalActionsExecuted, actionResult);
 
             if (!actionResult.ok) {
                 return {

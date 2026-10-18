@@ -34,7 +34,7 @@ import {
 } from "@/lib/tasks/adapt";
 import { requestStepCheck } from "@/lib/ai/step-check-client";
 import { configureAiRouting, routedProvider } from "@/lib/ai/aiProvider";
-import { validateAction } from "@/lib/worker/action-validation";
+import { validateAction, type ValidatedActionRequest } from "@/lib/worker/action-validation";
 import { MockDesktopWorker } from "@/lib/worker/mock-worker";
 import type { ActionResult, DesktopWorker, ObservationResult } from "@/lib/worker/worker";
 import { LocalHttpWorker } from "@/lib/worker/local-worker";
@@ -42,6 +42,12 @@ import { clearSession, readSession, writeSession } from "@/lib/worker/token-stor
 import { WorkerUnavailableError } from "@/lib/worker/worker";
 import { clearAll, load, save } from "@/lib/persistence/local-store";
 import { checkReadiness } from "@/lib/safety/readiness";
+import {
+  PLAN_CHUNK_MAX_COUNT,
+  PLAN_MAX_TOTAL_STEPS,
+  isTaskObjectiveComplete,
+  orchestrateTaskBatches,
+} from "@/lib/server/task-plan-orchestrator";
 
 export interface AppState {
   hydrated: boolean;
@@ -241,40 +247,8 @@ interface TaskBatchState {
   executedActionKeys: Set<string>;
   latestObservationText?: string;
   batchCount: number;
-  isComplete: boolean;
 }
 const batchStates = new Map<string, TaskBatchState>();
-
-function isTaskCompletionConfirmed(
-  summary?: string,
-  plan?: string[],
-  remainingObjective?: string,
-): boolean {
-  if (!summary && (!plan || plan.length === 0)) return false;
-  const text = `${summary ?? ""} ${plan?.join(" ") ?? ""} ${remainingObjective ?? ""}`.toLowerCase();
-  const completionMarkers = [
-    "task complete",
-    "task is complete",
-    "task completed",
-    "objective complete",
-    "objective achieved",
-    "goal achieved",
-    "goal complete",
-    "all actions completed",
-    "all steps completed",
-    "all steps complete",
-    "finished task",
-    "completed the task",
-    "no further actions required",
-    "no further actions needed",
-    "no further action needed",
-    "no more actions needed",
-    "nothing more to do",
-    "[complete]",
-    "[completed]",
-  ];
-  return completionMarkers.some((marker) => text.includes(marker));
-}
 
 async function checkAndAdapt(
   id: string,
@@ -472,81 +446,228 @@ async function tick(id: string) {
           completedActionsSummary: [],
           executedActionKeys: new Set<string>(),
           batchCount: 0,
-          isComplete: false,
         };
         batchStates.set(id, bState);
       }
 
-      const continuationContext = [
-        ...(t.context ? [`Project context from the user: ${t.context.slice(0, 480)}`] : []),
-        ...(t.lastVerifiedResult ? [t.lastVerifiedResult] : []),
-        ...(bState.completedActionsSummary.length
-          ? [`Completed actions: ${bState.completedActionsSummary.join("; ")}`.slice(0, 500)]
-          : []),
-        ...(bState.latestObservationText ? [`Latest observation: ${bState.latestObservationText}`.slice(0, 500)] : []),
-        ...(bState.completedActionsSummary.length
-          ? [`Do not re-execute already completed actions: ${bState.completedActionsSummary.join("; ")}`.slice(0, 500)]
-          : []),
-      ];
+      transition(id, "running");
 
-      const batchNum = bState.batchCount + 1;
-      log(
-        id,
-        "info",
-        sim
-          ? `Planning batch ${batchNum} with mock provider`
-          : `Planning batch ${batchNum} with Local Qwen`,
+      const orchestrationResult = await orchestrateTaskBatches(
+        {
+          taskId: id,
+          userRequest: bState.remainingObjective,
+          targetId: t.targetId,
+          providerId: t.providerId,
+          profileId: t.profileId,
+          context: [
+            ...(t.context ? [`Project context from the user: ${t.context.slice(0, 480)}`] : []),
+            ...(t.lastVerifiedResult ? [t.lastVerifiedResult] : []),
+          ],
+        },
+        {
+          planBatch: async (input) => {
+            const batchNum = (bState?.batchCount ?? 0) + 1;
+            log(
+              id,
+              "info",
+              sim
+                ? `Planning batch ${batchNum} with mock provider`
+                : `Planning batch ${batchNum} with ${provider.displayName}`,
+              sim,
+            );
+            return sim
+              ? new MockAIProvider().getNextStep({
+                  taskId: id,
+                  userRequest: input.userRequest,
+                  targetId: t.targetId,
+                  provider,
+                  profile,
+                })
+              : routedProvider(provider, profile, aiAbortFor(id)).getNextStep({
+                  taskId: id,
+                  userRequest: input.userRequest,
+                  targetId: t.targetId,
+                  provider,
+                  profile,
+                  context: input.context,
+                });
+          },
+          validateAction: (action) => {
+            const v = validateAction(action as ActionRequest, { strict: !sim, screen: state.connection.screen });
+            return v.ok ? { ok: true } : { ok: false, reason: v.reason };
+          },
+          onBatchStart: (batchIndex, result) => {
+            if (bState) bState.batchCount = batchIndex;
+            const existingSteps = getTask(id)?.steps ?? [];
+            const rawNormalized = normalizeProviderPlan(result, target);
+            const batchSteps = rawNormalized.slice(0, 3);
+            const combinedSteps = [...existingSteps, ...batchSteps];
+            patchTask(id, {
+              steps: combinedSteps,
+              currentStep: existingSteps.length,
+              approvedScope: approvedScopeFrom(combinedSteps, t.targetId),
+            });
+            log(
+              id,
+              "info",
+              `Batch ${batchIndex} ready: ${batchSteps.length} step(s) (${combinedSteps.length} total)`,
+              sim,
+            );
+          },
+          onActionStart: (step, actionIndex) => {
+            const act = (step as { action: ActionRequest }).action;
+            patchTask(id, {
+              currentAction: act,
+              currentStep: actionIndex,
+              verification: { status: "pending" },
+            });
+            log(id, "action", `${tag} ${act.description}`, sim, !sim);
+          },
+          executeAction: async (action) => {
+            const act = action as ActionRequest;
+            let result: ActionResult;
+            let realObs: ObservationResult | undefined;
+            if (!sim && act.kind === "read_screen") {
+              realObs = await w.observe({ taskId: id, targetId: t.targetId, targetLabel: t.targetId });
+              result = {
+                ok: true,
+                message: "Captured real desktop screenshot",
+                simulated: false,
+                completedAt: realObs.capturedAt,
+              };
+            } else {
+              result = await w.executeAction(id, act as ValidatedActionRequest);
+            }
+            if (!result.ok) {
+              return { ok: false, error: result.message, message: result.message };
+            }
+
+            const obs =
+              sim || !realObs
+                ? await w.observe({
+                    taskId: id,
+                    targetId: t.targetId,
+                    targetLabel: state.targets.find((x) => x.id === t.targetId)?.displayName ?? t.targetId,
+                    note: act.description,
+                  })
+                : realObs;
+
+            const curStep = getTask(id)?.steps.find((s) => s.action.description === act.description);
+            const verification = verifyActionOutcome(
+              act,
+              {
+                ok: result.ok,
+                message: result.message,
+                result: obs?.imageDataUrl,
+                ...(result.text ? { text: result.text } : {}),
+                ...(result.data ? { data: result.data } : {}),
+              },
+              curStep?.verification,
+            );
+
+            patchTask(id, {
+              verification: {
+                status: verification.status,
+                reason: verification.reason,
+                checkedAt: Date.now(),
+              },
+              lastVerifiedResult: verification.evidence ?? verification.reason,
+            });
+
+            if (verification.status === "failed") {
+              return {
+                ok: false,
+                error: `${verification.reason} (verification failed)`,
+                message: verification.reason,
+              };
+            }
+
+            if (state.settings.adaptiveChecks !== false && shouldCheckAfter(act.kind)) {
+              await checkAndAdapt(id, act, obs, sim);
+            }
+
+            return {
+              ok: true,
+              message: result.message,
+            };
+          },
+          onActionComplete: (step, actionIndex, actionResult) => {
+            const curTask = getTask(id);
+            if (!curTask) return;
+            const updatedSteps = curTask.steps.map((s, i) =>
+              i === actionIndex ? { ...s, done: true } : s,
+            );
+            patchTask(id, {
+              steps: updatedSteps,
+              currentStep: actionIndex + 1,
+              progress: Math.min(100, Math.round(((actionIndex + 1) / PLAN_MAX_TOTAL_STEPS) * 100)),
+              currentAction: undefined,
+            });
+            log(id, "result", `${sim ? "" : "[REAL] "}${actionResult.message ?? "Action complete"}`, sim, !sim);
+          },
+          observeDesktop: async () => {
+            try {
+              const obs = await w.observe({
+                taskId: id,
+                targetId: t.targetId,
+                targetLabel: state.targets.find((x) => x.id === t.targetId)?.displayName ?? t.targetId,
+                note: "Batch observation",
+              });
+              if (obs) {
+                patchTask(id, {
+                  lastObservation: {
+                    imageDataUrl: obs.imageDataUrl,
+                    capturedAt: obs.capturedAt,
+                    simulated: obs.simulated,
+                    ...(obs.width ? { width: obs.width, height: obs.height } : {}),
+                  },
+                });
+                if (bState) {
+                  bState.latestObservationText = `Observed at ${obs.capturedAt}${obs.simulated ? " (simulated)" : ""}`;
+                }
+                return {
+                  ok: true,
+                  observation: `Observed at ${obs.capturedAt}${obs.simulated ? " (simulated)" : ""}`,
+                  stale: false,
+                };
+              }
+              return { ok: false, stale: true };
+            } catch {
+              return { ok: false, stale: true };
+            }
+          },
+          isCancelled: () => Boolean(state.emergencyStop || getTask(id)?.status === "cancelled"),
+          isDeadlineExceeded: () => Boolean(t.deadlineAt && Date.now() >= t.deadlineAt),
+          requiresApproval: (step) => {
+            const s = step as PlannedStep;
+            if (!sim && !state.realActionsConfirmed) return true;
+            if (!getTask(id)?.planApproved && s.requiresApproval) return true;
+            return false;
+          },
+          onApprovalRequired: async () => {
+            transition(id, "waiting_for_approval");
+            log(id, "approval", "Approval required before action execution", sim);
+            return false;
+          },
+          isTaskComplete: (state) =>
+            isTaskObjectiveComplete(undefined, undefined, state.remainingObjective),
+        },
+        {
+          maxBatches: PLAN_CHUNK_MAX_COUNT,
+          maxTotalSteps: PLAN_MAX_TOTAL_STEPS,
+          maxRetriesPerAction: t.maxRetries ?? 2,
+        },
       );
 
-      const planned = sim
-        ? await new MockAIProvider().getNextStep({
-            taskId: id,
-            userRequest: bState.remainingObjective,
-            targetId: t.targetId,
-            provider,
-            profile,
-          })
-        : await routedProvider(provider, profile, aiAbortFor(id)).getNextStep({
-            taskId: id,
-            userRequest: bState.remainingObjective,
-            targetId: t.targetId,
-            provider,
-            profile,
-            context: continuationContext,
-          });
+      if (getTask(id)?.status !== "running" && getTask(id)?.status !== "planning") return;
 
-      if (getTask(id)?.status !== "planning" || state.emergencyStop) return;
-      if (!planned.ok)
-        return fail(id, `${provider.displayName} planning failed: ${planned.message}`);
-
-      if (isTaskCompletionConfirmed(planned.summary, planned.plan, bState.remainingObjective)) {
-        bState.isComplete = true;
-      }
-
-      const capabilities = !sim && w.getCapabilities ? await w.getCapabilities() : undefined;
-      const rawSteps = normalizeProviderPlan(planned, target, capabilities?.actions);
-
-      // Enforce at most 3 steps per planning batch
-      const batchSteps = rawSteps.slice(0, 3);
-
-      // Ensure previously completed steps are never executed again (prevent duplicate execution during continuation)
-      const newSteps = batchSteps.filter((s) => {
-        const actionKey = `${s.action.kind}:${s.action.targetId}:${s.action.keys ?? ""}:${s.action.text ?? ""}:${s.action.x ?? ""}:${s.action.y ?? ""}`;
-        return (
-          !bState!.executedActionKeys.has(actionKey) ||
-          s.action.kind === "wait" ||
-          s.action.kind === "read_screen"
-        );
-      });
-
-      if (newSteps.length === 0 && bState.completedActionsSummary.length > 0) {
-        // No new unique actions planned — original objective complete
+      if (orchestrationResult.stoppedReason === "completed") {
         const tname = state.targets.find((x) => x.id === t.targetId)?.displayName ?? t.targetId;
         transition(id, "completed", {
           progress: 100,
           summary: sim
-            ? `Completed ${t.steps.length} simulated steps across ${bState.batchCount} batch(es) on ${tname}. Task objective achieved.`
-            : `Completed ${t.steps.length} real worker steps across ${bState.batchCount} batch(es). Task objective achieved.`,
+            ? `Completed ${orchestrationResult.totalActionsExecuted} simulated steps across ${orchestrationResult.batchesExecuted} batch(es) on ${tname}. Task objective achieved.`
+            : `Completed ${orchestrationResult.totalActionsExecuted} real worker steps across ${orchestrationResult.batchesExecuted} batch(es). Task objective achieved.`,
         });
         log(
           id,
@@ -556,241 +677,24 @@ async function tick(id: string) {
           !sim,
         );
         batchStates.delete(id);
-        return;
+      } else if (orchestrationResult.stoppedReason === "cancelled") {
+        transition(id, "cancelled");
+        log(id, "warning", "Task was cancelled", sim);
+        batchStates.delete(id);
+      } else if (orchestrationResult.stoppedReason === "approval_required") {
+        // Paused in waiting_for_approval; batchStates is retained for resumption when approved.
+      } else if (orchestrationResult.stoppedReason === "deadline_exceeded") {
+        fail(id, "Task execution timed out");
+      } else {
+        fail(id, orchestrationResult.error ?? "Task execution failed");
       }
-
-      if (capabilities?.keys) {
-        const helperKeys = new Set(capabilities.keys.map((k) => k.toLowerCase()));
-        const missing = newSteps
-          .filter((s) => s.action.kind === "key_press" && s.action.keys)
-          .map((s) => s.action.keys!.toLowerCase())
-          .filter((k) => !helperKeys.has(k));
-        if (missing.length)
-          return fail(
-            id,
-            `The helper on your PC is an older version and does not allow: ${[...new Set(missing)].join(", ")}. In PowerShell: stop the helper (Ctrl+C), run "git pull", then ".\\start-worker.ps1" and pair again.`,
-          );
-      }
-
-      bState.batchCount += 1;
-      const existingSteps = t.steps ?? [];
-      const startIndex = existingSteps.length;
-      const combinedSteps = [...existingSteps, ...newSteps];
-
-      transition(id, "running", {
-        steps: combinedSteps,
-        currentStep: startIndex,
-        approvedScope: approvedScopeFrom(combinedSteps, t.targetId),
-      });
-      log(
-        id,
-        "info",
-        `Batch ${bState.batchCount} ready: ${newSteps.length} step(s) (${combinedSteps.length} total)`,
-        sim,
-      );
-      return schedule(id);
+      return;
     }
-    if (t.status !== "running") return;
 
-    const step = t.steps[t.currentStep];
-    if (!step) {
-      const bState = batchStates.get(id);
-      const completionSignal =
-        bState?.isComplete ||
-        isTaskCompletionConfirmed(
-          t.summary,
-          t.steps.map((s) => s.action.description),
-          bState?.remainingObjective,
-        );
-      const maxBatchesReached = (bState?.batchCount ?? 1) >= 8;
-      const maxStepsReached = t.steps.length >= 12;
-
-      // Mark the task as completed only when the reliable completion signal confirms that the original objective has been achieved, or safe bounded continuation limit reached
-      if (completionSignal || maxBatchesReached || maxStepsReached) {
-        const tname = state.targets.find((x) => x.id === t.targetId)?.displayName ?? t.targetId;
-        transition(id, "completed", {
-          progress: 100,
-          summary: sim
-            ? `Completed ${t.steps.length} simulated steps across ${bState?.batchCount ?? 1} batch(es) on ${tname}. Task objective achieved.`
-            : `Completed ${t.steps.length} real worker steps across ${bState?.batchCount ?? 1} batch(es). Task objective achieved.`,
-        });
-        log(
-          id,
-          "result",
-          sim ? "Task completed (demo)" : "Task completed (real local worker)",
-          sim,
-          !sim,
-        );
-        batchStates.delete(id);
-        return;
-      }
-
-      // If the original objective remains unfinished after a successful batch, request the next planning batch through the existing task-state flow.
-      if (bState) {
-        bState.remainingObjective = `Remaining objective for: ${t.description}. Completed so far: ${bState.completedActionsSummary.slice(-3).join("; ")}`.slice(0, 500);
-      }
+    if (t.status === "running") {
       transition(id, "planning");
-      log(
-        id,
-        "info",
-        `Batch ${bState?.batchCount ?? 1} finished (${t.steps.length} step(s) done). Requesting next planning batch…`,
-        sim,
-      );
       return schedule(id);
     }
-    if (!sim && !state.realActionsConfirmed) {
-      transition(id, "waiting_for_approval");
-      log(
-        id,
-        "approval",
-        "Confirmation required before the first REAL desktop action this session",
-        false,
-      );
-      return;
-    }
-    if (!t.planApproved && t.steps.some((x) => x.requiresApproval)) {
-      transition(id, "waiting_for_approval");
-      log(id, "approval", `Approval required once for the whole plan (${t.steps.length} steps)`);
-      return;
-    }
-    let action = step.action;
-    if (!sim && action.kind === "click" && !action.observationId) {
-      const before = await w.observe({
-        taskId: id,
-        targetId: t.targetId,
-        targetLabel: state.targets.find((x) => x.id === t.targetId)?.displayName ?? t.targetId,
-        note: "Fresh observation before coordinate action",
-      });
-      if (getTask(id)?.status !== "running" || state.emergencyStop) return;
-      action = before.observationId ? { ...action, observationId: before.observationId } : action;
-      patchTask(id, {
-        steps: getTask(id)!.steps.map((s, i) => (i === t.currentStep ? { ...s, action } : s)),
-      });
-    }
-    const v = validateAction(action, { strict: !sim, screen: state.connection.screen });
-    if (!v.ok) return fail(id, `Action rejected by validator: ${v.reason}`);
-    patchTask(id, { currentAction: action, verification: { status: "pending" } });
-    log(id, "action", `${tag} ${action.description}`, sim, !sim);
-    let realObs: ObservationResult | undefined;
-    let result: ActionResult;
-    if (!sim && action.kind === "read_screen") {
-      realObs = await w.observe({ taskId: id, targetId: t.targetId, targetLabel: t.targetId });
-      result = {
-        ok: true,
-        message: "Captured real desktop screenshot",
-        simulated: false,
-        completedAt: realObs.capturedAt,
-      };
-    } else {
-      result = await w.executeAction(id, v.action);
-    }
-    if (getTask(id)?.status !== "running") return; // paused/cancelled meanwhile
-    if (!result.ok) {
-      const cur = getTask(id)!;
-      const maxR = cur.maxRetries ?? 2;
-      if (cur.retries < maxR) {
-        patchTask(id, { retries: cur.retries + 1 });
-        log(id, "warning", `${result.message}. Retrying (${cur.retries + 1}/${maxR})…`);
-        return schedule(id);
-      }
-      return fail(id, `${result.message} after 2 retries`);
-    }
-    const obs =
-      sim || !realObs
-        ? await w.observe({
-            taskId: id,
-            targetId: t.targetId,
-            targetLabel: state.targets.find((x) => x.id === t.targetId)?.displayName ?? t.targetId,
-            note: action.description,
-          })
-        : realObs;
-    if (getTask(id)?.status !== "running") return;
-    transition(id, "verifying");
-    const verification = verifyActionOutcome(
-      action,
-      {
-        ok: result.ok,
-        message: result.message,
-        result: obs?.imageDataUrl,
-        ...(result.text ? { text: result.text } : {}),
-        ...(result.data ? { data: result.data } : {}),
-      },
-      step.verification,
-    );
-    if (getTask(id)?.status !== "verifying") return;
-    if (verification.status === "failed") {
-      patchTask(id, {
-        verification: {
-          status: verification.status,
-          reason: verification.reason,
-          checkedAt: Date.now(),
-        },
-      });
-      const cur = getTask(id)!;
-      const maxR = cur.maxRetries ?? 2;
-      if (cur.retries < maxR) {
-        patchTask(id, { retries: cur.retries + 1 });
-        transition(id, "running");
-        log(id, "warning", `${verification.reason} Retrying (${cur.retries + 1}/${maxR})…`, sim);
-        return schedule(id);
-      }
-      return fail(id, `${verification.reason} after 2 verification retries`);
-    }
-    if (verification.status === "unverified") {
-      patchTask(id, {
-        verification: {
-          status: "unverified",
-          reason: verification.reason,
-          checkedAt: Date.now(),
-        },
-      });
-      log(
-        id,
-        "warning",
-        `${verification.reason} Recorded as unverified — continuing without retry.`,
-        sim,
-      );
-    }
-    if (state.settings.adaptiveChecks !== false && shouldCheckAfter(action.kind)) {
-      const outcome = await checkAndAdapt(id, action, obs, sim);
-      if (outcome === "handled") return;
-    }
-    const next = t.currentStep + 1;
-    const bState = batchStates.get(id);
-    if (bState) {
-      bState.completedActionsSummary.push(action.description);
-      const actionKey = `${action.kind}:${action.targetId}:${action.keys ?? ""}:${action.text ?? ""}:${action.x ?? ""}:${action.y ?? ""}`;
-      bState.executedActionKeys.add(actionKey);
-      if (obs) {
-        bState.latestObservationText = `Observed after "${action.description}" at ${obs.capturedAt}${obs.simulated ? " (simulated)" : ""}`;
-      }
-    }
-    transition(id, "running");
-    patchTask(id, {
-      currentStep: next,
-      retries: 0,
-      progress: Math.round((next / t.steps.length) * 100),
-      steps: getTask(id)!.steps.map((s, i) => (i === t.currentStep ? { ...s, done: true } : s)),
-      ...(obs
-        ? {
-            lastObservation: {
-              imageDataUrl: obs.imageDataUrl,
-              capturedAt: obs.capturedAt,
-              simulated: obs.simulated,
-              ...(obs.width ? { width: obs.width, height: obs.height } : {}),
-            },
-          }
-        : {}),
-      verification: {
-        status: verification.status,
-        reason: verification.reason,
-        checkedAt: Date.now(),
-      },
-      lastVerifiedResult: verification.evidence ?? verification.reason,
-      currentAction: undefined,
-    });
-    log(id, "result", `${sim ? "" : "[REAL] "}${result.message}`, sim, !sim);
-    schedule(id);
   } catch (e) {
     if (e instanceof WorkerUnavailableError) fail(id, e.message);
     else fail(id, e instanceof Error ? e.message : "Unknown error");
