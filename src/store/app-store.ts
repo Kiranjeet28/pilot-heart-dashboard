@@ -47,7 +47,7 @@ import {
   PLAN_MAX_TOTAL_STEPS,
   isTaskObjectiveComplete,
   orchestrateTaskBatches,
-} from "@/lib/server/task-plan-orchestrator";
+} from "@/lib/tasks/task-plan-orchestrator";
 
 export interface AppState {
   hydrated: boolean;

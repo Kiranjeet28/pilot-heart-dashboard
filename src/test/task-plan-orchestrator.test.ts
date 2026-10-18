@@ -9,7 +9,7 @@ import {
     orchestrateTaskBatches,
     buildBatchContinuationContext,
     buildNextPlanningBatchInput,
-} from "@/lib/server/task-plan-orchestrator";
+} from "@/lib/tasks/task-plan-orchestrator";
 import type { ProviderResult } from "@/lib/ai/provider";
 
 describe("task plan orchestration foundation", () => {
