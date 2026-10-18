@@ -126,7 +126,9 @@ export function normalizeProviderPlan(
     if (target.interactionMode === "observe_only" && INPUT_ACTIONS.includes(action.kind))
       throw new Error(`Target "${target.displayName}" only permits observation.`);
     const validation = validateAction(action);
-    if (!validation.ok) throw new Error(`Plan step ${index + 1} is invalid: ${validation.reason}`);
+    if (!validation.ok) throw new Error(
+      `Plan step ${index + 1} uses unsupported worker action "${action.kind}". Supported: ${supportedActions?.join(", ")}`
+    );
 
     const policyRequiresApproval =
       target.interactionMode !== "autonomous" && INPUT_ACTIONS.includes(action.kind);

@@ -53,7 +53,6 @@ export interface ProviderAdapter {
 const actionSchema = z
   .object({
     kind: z.enum([
-      "focus_window",
       "read_screen",
       "click",
       "type_text",
@@ -71,6 +70,14 @@ const actionSchema = z
     durationMs: z.number().int().min(0).max(60000).optional(),
     observationId: z.string().optional(),
     requiresApproval: z.boolean().optional(),
+  })
+  .superRefine((action, ctx) => {
+    if (action.kind === "click" && (action.x == null || action.y == null)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "click requires x and y as non-negative integers; do not guess coordinates",
+      });
+    }
   })
   .transform(({ requiresApproval: _requiresApproval, ...action }): ActionRequest => ({
     kind: action.kind,

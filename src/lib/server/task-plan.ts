@@ -6,6 +6,15 @@ import {
   buildPlanPrompt as buildPrompt,
 } from "@/lib/ai/plan-prompt";
 
+import {
+  PLAN_CHUNK_MAX_OUTPUT_TOKENS,
+  TASK_DECOMPOSITION_SCHEMA,
+  buildDecompositionPrompt,
+  getReadyChunks,
+  mergeChunkPlans,
+  validateTaskDecomposition,
+} from "@/lib/server/task-plan-orchestrator";
+
 export interface TaskPlanRequestInput {
   taskId?: string | undefined;
   userRequest: string;
@@ -128,7 +137,10 @@ export function toGeminiResponseSchema(schema: unknown): unknown {
  * Routes directly to local llama-server running model alias "qwen".
  * Never calls Gemini or Lovable AI Gateway.
  */
-export async function generateTaskPlan(input: TaskPlanRequestInput): Promise<ProviderResult> {
+
+export async function generateTaskPlan(
+  input: TaskPlanRequestInput,
+): Promise<ProviderResult> {
   const rawBase = "http://127.0.0.1:8081";
   const baseUrl = rawBase.replace(/\/+$/, "");
   const endpoint = baseUrl.endsWith("/v1")
@@ -138,111 +150,236 @@ export async function generateTaskPlan(input: TaskPlanRequestInput): Promise<Pro
   const model = "qwen";
   const timeoutMs = input.timeoutMs ?? 60000;
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  type LocalResponse = {
+    choices?: Array<{
+      message?: {
+        content?: string | Array<{ text?: string }>;
+      };
+    }>;
+  };
 
-  try {
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model,
-        stream: false,
-        temperature: 0.2,
-        max_tokens: 700,
-        chat_template_kwargs: { enable_thinking: false },
-        response_format: {
-          type: "json_schema",
-          json_schema: { name: "task_plan", strict: true, schema: PLAN_JSON_SCHEMA },
-        },
-        messages: [
-          {
-            role: "system",
-            content: LOCAL_SYSTEM,
-          },
-          {
-            role: "user",
-            content: buildPrompt(input),
-          },
-        ],
-      }),
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      const details = await response.text().catch(() => "");
-      throw Object.assign(
-        new Error(`Local Qwen server returned HTTP ${response.status}. ${details.slice(0, 300)}`),
-        {
-          code: "local_model_error",
-          status: 502,
-        },
-      );
-    }
-
-    const data = (await response.json()) as {
-      choices?: Array<{
-        message?: {
-          content?: string | Array<{ text?: string }>;
-        };
-      }>;
-    };
-
-    const content = data.choices?.[0]?.message?.content;
-    const rawText =
-      typeof content === "string"
-        ? content
-        : Array.isArray(content)
-          ? content.map((part) => part.text ?? "").join("")
-          : "";
-
-    if (!rawText.trim()) {
-      throw Object.assign(new Error("Local Qwen returned an empty plan."), {
-        code: "invalid_response",
-        status: 502,
-      });
-    }
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(extractJsonObject(rawText));
-    } catch {
-      throw Object.assign(new Error("Local Qwen did not return valid JSON."), {
-        code: "invalid_response",
-        status: 502,
-      });
-    }
+  async function requestJson(
+    schemaName: string,
+    schema: unknown,
+    system: string,
+    prompt: string,
+    maxTokens: number,
+  ): Promise<unknown> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
-      return normalizeProviderResponse(parsed);
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model,
+          stream: false,
+          temperature: 0.2,
+          max_tokens: maxTokens,
+          chat_template_kwargs: { enable_thinking: false },
+          response_format: {
+            type: "json_schema",
+            json_schema: {
+              name: schemaName,
+              strict: true,
+              schema,
+            },
+          },
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: prompt },
+          ],
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const details = await response.text().catch(() => "");
+        throw Object.assign(
+          new Error(
+            `Local Qwen server returned HTTP ${response.status}. ${details.slice(0, 300)}`,
+          ),
+          { code: "local_model_error", status: 502 },
+        );
+      }
+
+      const data = (await response.json()) as LocalResponse;
+      const content = data.choices?.[0]?.message?.content;
+      const rawText =
+        typeof content === "string"
+          ? content
+          : Array.isArray(content)
+            ? content.map((part) => part.text ?? "").join("")
+            : "";
+
+      if (!rawText.trim()) {
+        throw Object.assign(
+          new Error("Local Qwen returned an empty response."),
+          { code: "invalid_response", status: 502 },
+        );
+      }
+
+      try {
+        return JSON.parse(extractJsonObject(rawText));
+      } catch {
+        throw Object.assign(
+          new Error("Local Qwen did not return valid JSON."),
+          { code: "invalid_response", status: 502 },
+        );
+      }
     } catch (error) {
+      if (error && typeof error === "object" && "code" in error) {
+        throw error;
+      }
+
+      if (controller.signal.aborted) {
+        throw Object.assign(
+          new Error("Local Qwen planning request timed out."),
+          { code: "timeout", status: 504 },
+        );
+      }
+
       throw Object.assign(
-        new Error(error instanceof Error ? error.message : "Local Qwen returned an invalid plan."),
+        new Error(
+          `Cannot reach local Qwen at ${endpoint}. Check that llama-server is running on port 8081.`,
+        ),
+        { code: "local_model_unavailable", status: 502 },
+      );
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  // First, split the request into a validated dependency graph.
+  const decompositionRaw = await requestJson(
+    "task_decomposition",
+    TASK_DECOMPOSITION_SCHEMA,
+    [
+      "You are a task decomposition planner.",
+      "Return only JSON matching the provided schema.",
+      "Split the user's desktop task into small, independently plannable chunks.",
+      "Use dependencies only when a chunk requires another chunk first.",
+      "Create no more than 8 chunks.",
+      "Do not execute actions or invent screen coordinates.",
+    ].join(" "),
+    buildDecompositionPrompt(input),
+    1200,
+  );
+
+  let decomposition;
+  try {
+    decomposition = validateTaskDecomposition(decompositionRaw);
+  } catch (error) {
+    throw Object.assign(
+      new Error(
+        error instanceof Error
+          ? `Invalid task decomposition: ${error.message}`
+          : "Local Qwen returned an invalid task decomposition.",
+      ),
+      { code: "invalid_response", status: 502 },
+    );
+  }
+
+  const completedIds = new Set<string>();
+  const resultsById = new Map<string, ProviderResult>();
+  const orderedPlans: Array<{
+    chunkId: string;
+    result: ProviderResult;
+  }> = [];
+
+  // Run independent chunks concurrently; dependent chunks wait for their
+  // dependencies to finish planning.
+  while (completedIds.size < decomposition.chunks.length) {
+    const readyChunks = getReadyChunks(
+      decomposition.chunks,
+      completedIds,
+      new Set<string>(),
+    );
+
+    if (readyChunks.length === 0) {
+      throw Object.assign(
+        new Error("No runnable chunks remain in the task dependency graph."),
         { code: "invalid_response", status: 502 },
       );
     }
+
+    const batch = await Promise.all(
+      readyChunks.map(async (chunk) => {
+        const dependencyContext = chunk.dependsOn.map((dependencyId) => {
+          const dependencyResult = resultsById.get(dependencyId);
+
+          if (!dependencyResult) {
+            throw new Error(
+              `Missing completed planning dependency: ${dependencyId}`,
+            );
+          }
+
+          return [
+            `Completed planning dependency: ${dependencyId}`,
+            `Dependency summary: ${dependencyResult.summary}`,
+            `Dependency plan: ${dependencyResult.plan.join("\n")}`,
+          ].join("\n");
+        });
+
+        const chunkInput: TaskPlanRequestInput = {
+          ...input,
+          userRequest: chunk.description,
+          context: [
+            ...(input.context ?? []),
+            `Original user task: ${input.userRequest}`,
+            `Current chunk ID: ${chunk.id}`,
+            `Current chunk objective: ${chunk.description}`,
+            ...dependencyContext,
+          ],
+        };
+
+        const rawPlan = await requestJson(
+          `task_plan_${chunk.id.replace(/[^a-zA-Z0-9_-]/g, "_")}`,
+          PLAN_JSON_SCHEMA,
+          LOCAL_SYSTEM,
+          buildPrompt(chunkInput),
+          PLAN_CHUNK_MAX_OUTPUT_TOKENS,
+        );
+
+        let result: ProviderResult;
+
+        try {
+          result = normalizeProviderResponse(rawPlan);
+        } catch (error) {
+          throw Object.assign(
+            new Error(
+              error instanceof Error
+                ? error.message
+                : `Chunk "${chunk.id}" returned an invalid plan.`,
+            ),
+            { code: "invalid_response", status: 502 },
+          );
+        }
+
+        return { chunkId: chunk.id, result };
+      }),
+    );
+
+    // Preserve dependency order when combining completed batches.
+    for (const item of batch) {
+      resultsById.set(item.chunkId, item.result);
+      completedIds.add(item.chunkId);
+      orderedPlans.push(item);
+    }
+  }
+
+  try {
+    return mergeChunkPlans(orderedPlans);
   } catch (error) {
-    if (error && typeof error === "object" && "code" in error) {
-      throw error;
-    }
-
-    if (controller.signal.aborted) {
-      throw Object.assign(new Error("Local Qwen planning request timed out."), {
-        code: "timeout",
-        status: 504,
-      });
-    }
-
     throw Object.assign(
       new Error(
-        `Cannot reach local Qwen at ${endpoint}. Check that llama-server is running on port 8081.`,
+        error instanceof Error
+          ? error.message
+          : "Unable to combine the chunk plans.",
       ),
-      { code: "local_model_unavailable", status: 502 },
+      { code: "invalid_response", status: 502 },
     );
-  } finally {
-    clearTimeout(timer);
   }
 }
 

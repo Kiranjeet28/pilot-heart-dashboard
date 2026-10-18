@@ -31,20 +31,81 @@ const gatewayState = vi.hoisted(() => ({
 const sseFor = (payload: unknown) =>
   `data: ${JSON.stringify({ choices: [{ delta: { content: JSON.stringify(payload) } }] })}\n\ndata: [DONE]\n\n`;
 
+
 function stubGatewayFetch() {
+  let decompositionRequested = false;
+
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (input: RequestInfo | URL) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+
       if (url.includes("/chat/completions") || url.includes("ai.gateway.lovable.dev")) {
+        const body =
+          typeof init?.body === "string"
+            ? JSON.parse(init.body)
+            : {};
+
+        const messages = Array.isArray(body.messages) ? body.messages : [];
+        const systemMessage = messages.find(
+          (message: { role?: string }) => message.role === "system",
+        );
+        const systemContent =
+          typeof systemMessage?.content === "string"
+            ? systemMessage.content
+            : "";
+
+        if (
+          !decompositionRequested &&
+          (systemContent.toLowerCase().includes("decompos") ||
+            JSON.stringify(body.response_format ?? {})
+              .toLowerCase()
+              .includes("task_decomposition"))
+        ) {
+          decompositionRequested = true;
+
+          return Response.json({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    chunks: [
+                      {
+                        id: "chunk-1",
+                        description: "Inspect the desktop state",
+                        dependsOn: [],
+                      },
+                    ],
+                  }),
+                },
+              },
+            ],
+          });
+        }
+
         return Response.json({
-          choices: [{ message: { content: JSON.stringify(gatewayState.payload) } }],
+          choices: [
+            {
+              message: {
+                content: JSON.stringify(gatewayState.payload),
+              },
+            },
+          ],
         });
       }
-      return new Response(JSON.stringify({ message: "not found" }), { status: 404 });
+
+      return new Response(JSON.stringify({ message: "not found" }), {
+        status: 404,
+      });
     }),
   );
 }
+
 
 afterEach(() => {
   vi.unstubAllGlobals();
