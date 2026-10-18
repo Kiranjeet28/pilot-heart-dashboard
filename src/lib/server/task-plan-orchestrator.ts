@@ -8,7 +8,20 @@ export interface TaskPlanChunk {
     description: string;
     dependsOn: string[];
 }
-
+export function getReadyChunks(
+    chunks: TaskPlanChunk[],
+    completedIds: Set<string>,
+    scheduledIds: Set<string>,
+): TaskPlanChunk[] {
+    return chunks.filter(
+        (chunk) =>
+            !completedIds.has(chunk.id) &&
+            !scheduledIds.has(chunk.id) &&
+            chunk.dependsOn.every((dependency) =>
+                completedIds.has(dependency),
+            ),
+    );
+}
 export interface TaskDecomposition {
     chunks: TaskPlanChunk[];
 }

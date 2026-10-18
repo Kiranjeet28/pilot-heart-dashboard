@@ -1,13 +1,14 @@
-
 import { describe, expect, it } from "vitest";
 import {
     PLAN_CHUNK_MAX_COUNT,
     PLAN_CHUNK_MAX_OUTPUT_TOKENS,
     PLAN_MAX_TOTAL_STEPS,
     validateTaskDecomposition,
+    mergeChunkPlans,
+    getReadyChunks,
 } from "@/lib/server/task-plan-orchestrator";
-import { mergeChunkPlans } from "@/lib/server/task-plan-orchestrator";
 import type { ProviderResult } from "@/lib/ai/provider";
+
 describe("task plan orchestration foundation", () => {
     it("uses the configured planning limits", () => {
         expect(PLAN_CHUNK_MAX_OUTPUT_TOKENS).toBe(500);
@@ -76,39 +77,71 @@ describe("task plan orchestration foundation", () => {
                 chunks: Array.from(
                     { length: PLAN_CHUNK_MAX_COUNT + 1 },
                     (_, index) => ({
-                        id: `task_${index}`,
-                        description: `Task ${index}`,
+                        id: `task_${ index } `,
+                        description: `Task ${ index } `,
                         dependsOn: [],
                     }),
                 ),
             }),
         ).toThrow(/between 1 and 8 chunks/i);
     });
-});
-it("merges chunk plans in the supplied order", () => {
-    const makePlan = (description: string): ProviderResult => ({
-        ok: true,
-        plan: [description],
-        summary: description,
-        steps: [
-            {
-                action: {
-                    kind: "read_screen",
-                    targetId: "desktop",
-                    description,
+
+    it("merges chunk plans in the supplied order", () => {
+        const makePlan = (description: string): ProviderResult => ({
+            ok: true,
+            plan: [description],
+            summary: description,
+            steps: [
+                {
+                    action: {
+                        kind: "read_screen",
+                        targetId: "desktop",
+                        description,
+                    },
+                    requiresApproval: false,
+                    verification: { kind: "screen_capture" },
                 },
-                requiresApproval: false,
-                verification: { kind: "screen_capture" },
-            },
-        ],
+            ],
+        });
+
+        const merged = mergeChunkPlans([
+            { chunkId: "first", result: makePlan("Inspect screen") },
+            { chunkId: "second", result: makePlan("Verify screen") },
+        ]);
+
+        expect(merged.steps).toHaveLength(2);
+        expect(merged.steps[0]?.action.description).toBe("Inspect screen");
+        expect(merged.steps[1]?.action.description).toBe("Verify screen");
     });
 
-    const merged = mergeChunkPlans([
-        { chunkId: "first", result: makePlan("Inspect screen") },
-        { chunkId: "second", result: makePlan("Verify screen") },
-    ]);
+    it("returns only chunks whose dependencies are completed", () => {
+        const chunks = [
+            { id: "a", description: "First", dependsOn: [] },
+            { id: "b", description: "Independent", dependsOn: [] },
+            { id: "c", description: "Depends on a", dependsOn: ["a"] },
+        ];
 
-    expect(merged.steps).toHaveLength(2);
-    expect(merged.steps[0]?.action.description).toBe("Inspect screen");
-    expect(merged.steps[1]?.action.description).toBe("Verify screen");
+        const ready = getReadyChunks(
+            chunks,
+            new Set<string>(),
+            new Set<string>(),
+        );
+
+        expect(ready.map((chunk) => chunk.id)).toEqual(["a", "b"]);
+    });
+
+    it("makes dependent chunks ready after their dependency completes", () => {
+        const chunks = [
+            { id: "a", description: "First", dependsOn: [] },
+            { id: "c", description: "Depends on a", dependsOn: ["a"] },
+        ];
+
+        const ready = getReadyChunks(
+            chunks,
+            new Set(["a"]),
+            new Set(["a"]),
+        );
+
+        expect(ready.map((chunk) => chunk.id)).toEqual(["c"]);
+    });
 });

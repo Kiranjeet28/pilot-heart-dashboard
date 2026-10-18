@@ -475,7 +475,7 @@ export async function streamLocalChat(
   }
 }
 
-const REMINDER = "Return only valid JSON matching the schema. Every click action MUST include x and y as non-negative integers. If coordinates are not explicitly grounded in the supplied screen context, do not use click; use read_screen or keyboard navigation instead. Never guess coordinates.";
+const REMINDER = "Return only valid JSON matching the schema.";
 
 async function localOnce(
   request: AIRequest,
