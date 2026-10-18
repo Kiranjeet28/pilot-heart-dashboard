@@ -78,6 +78,12 @@ const actionSchema = z
         message: "click requires x and y as non-negative integers; do not guess coordinates",
       });
     }
+    if (action.kind === "key_press" && (!action.keys || !action.keys.trim())) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "key_press requires keys",
+      });
+    }
   })
   .transform(({ requiresApproval: _requiresApproval, ...action }): ActionRequest => ({
     kind: action.kind,
