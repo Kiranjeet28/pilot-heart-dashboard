@@ -148,6 +148,7 @@ export interface Task {
   lastCheck?: {
     verdict: "ok" | "off_track" | "unsure";
     reason: string;
+    screenSummary?: string;
     simulated: boolean;
     checkedAt: number;
   };

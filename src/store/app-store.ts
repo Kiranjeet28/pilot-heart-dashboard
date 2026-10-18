@@ -262,6 +262,7 @@ async function checkAndAdapt(
       lastCheck: {
         verdict: "ok",
         reason: "Simulated check",
+        screenSummary: "Target window visible and active",
         simulated: true,
         checkedAt: Date.now(),
       },
@@ -304,6 +305,7 @@ async function checkAndAdapt(
     lastCheck: {
       verdict: check.verdict,
       reason: check.reason,
+      ...(check.screenSummary ? { screenSummary: check.screenSummary } : {}),
       simulated: false,
       checkedAt: Date.now(),
     },
@@ -607,10 +609,11 @@ async function tick(id: string) {
           },
           observeDesktop: async () => {
             try {
+              const targetLabel = state.targets.find((x) => x.id === t.targetId)?.displayName ?? t.targetId;
               const obs = await w.observe({
                 taskId: id,
                 targetId: t.targetId,
-                targetLabel: state.targets.find((x) => x.id === t.targetId)?.displayName ?? t.targetId,
+                targetLabel,
                 note: "Batch observation",
               });
               if (obs) {
@@ -622,12 +625,27 @@ async function tick(id: string) {
                     ...(obs.width ? { width: obs.width, height: obs.height } : {}),
                   },
                 });
+
+                const curTask = getTask(id);
+                const dims = obs.width && obs.height ? ` (${obs.width}x${obs.height})` : "";
+                const obsId = obs.observationId ? ` [id:${obs.observationId}]` : "";
+                const evidence = curTask?.lastVerifiedResult ? ` Evidence: ${curTask.lastVerifiedResult}.` : "";
+                const screenVisual = curTask?.lastCheck?.screenSummary
+                  ? ` Visual: ${curTask.lastCheck.screenSummary}.`
+                  : curTask?.lastCheck?.reason
+                    ? ` Check: ${curTask.lastCheck.reason}.`
+                    : "";
+                const simNote = obs.simulated ? " (simulated)" : "";
+
+                const structuredObs = `Target: ${targetLabel}${dims}${obsId} at ${obs.capturedAt}${simNote}.${evidence}${screenVisual}`.slice(0, 500);
+
                 if (bState) {
-                  bState.latestObservationText = `Observed at ${obs.capturedAt}${obs.simulated ? " (simulated)" : ""}`;
+                  bState.latestObservationText = structuredObs;
                 }
                 return {
                   ok: true,
-                  observation: `Observed at ${obs.capturedAt}${obs.simulated ? " (simulated)" : ""}`,
+                  observation: structuredObs,
+                  observationId: obs.observationId,
                   stale: false,
                 };
               }

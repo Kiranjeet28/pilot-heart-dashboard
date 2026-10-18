@@ -353,7 +353,12 @@ export interface TaskBatchExecutionHandlers {
     planBatch: (input: TaskPlanRequestInput) => Promise<ProviderResult>;
     validateAction: (action: unknown) => { ok: boolean; reason?: string };
     executeAction: (action: unknown) => Promise<{ ok: boolean; message?: string; error?: string }>;
-    observeDesktop: () => Promise<{ ok: boolean; observation?: string; stale?: boolean }>;
+    observeDesktop: () => Promise<{
+        ok: boolean;
+        observation?: string;
+        observationId?: string;
+        stale?: boolean;
+    }>;
     isCancelled?: () => boolean;
     isDeadlineExceeded?: () => boolean;
     requiresApproval?: (step: unknown) => boolean;
@@ -573,6 +578,9 @@ export async function orchestrateTaskBatches(
                         };
                     }
                     latestObservation = freshObs.observation;
+                    if (freshObs.observationId) {
+                        clickAction.observationId = freshObs.observationId;
+                    }
                 }
             }
 
