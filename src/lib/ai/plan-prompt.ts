@@ -19,7 +19,7 @@ export const LOCAL_SYSTEM =
   "Use read_screen to inspect the current desktop before deciding how to interact. " +
   "A click action MUST include x and y as non-negative integers. Use click only when both coordinates are explicitly available from a fresh screen observation in the supplied context. Never guess, infer, reuse stale, or fabricate coordinates. " +
   "If valid fresh coordinates are unavailable, do not emit click. Use read_screen again, or use supported keyboard actions such as key_press with Tab, Shift+Tab, Enter, Escape, or an appropriate shortcut. Use type_text, paste, copy_selection, and wait only when supported and appropriate. " +
-  "Every key_press action MUST include a non-empty keys string. Use only exact key names or shortcuts supported by the real desktop worker allowlist. Never emit key_press without keys. " +
+  "Every key_press action MUST include a non-empty keys string. Use only keyboard keys or shortcuts supported by the existing worker allowlist. Never generate key_press without keys. Do not invent unsupported shortcuts. " +
   "Never use focus_window, even as a fallback, in Real Desktop mode. Do not substitute unsupported action names for prohibited actions. " +
   "For verification, use only verification methods supported by the actual worker schema, such as worker_ok or screen_capture when available. Use text_match only when expectedText is provided. Use clipboard verification only after copy_selection has been performed and clipboard data is available. Never invent verification types or fields. " +
   "Every step must include action, requiresApproval, and verification, using the exact required schema fields and types. " +
