@@ -649,8 +649,12 @@ async function tick(id: string) {
             log(id, "approval", "Approval required before action execution", sim);
             return false;
           },
-          isTaskComplete: (state) =>
-            isTaskObjectiveComplete(undefined, undefined, state.remainingObjective),
+          isTaskComplete: (state, planResult) =>
+            isTaskObjectiveComplete(
+              planResult.summary,
+              planResult.plan,
+              state.remainingObjective,
+            ),
         },
         {
           maxBatches: PLAN_CHUNK_MAX_COUNT,

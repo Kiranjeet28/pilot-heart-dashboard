@@ -362,7 +362,10 @@ export interface TaskBatchExecutionHandlers {
     onBatchComplete?: (batchIndex: number, result: ProviderResult) => void;
     onActionStart?: (step: unknown, actionIndex: number) => void;
     onActionComplete?: (step: unknown, actionIndex: number, result: { ok: boolean; message?: string }) => void;
-    isTaskComplete?: (state: TaskBatchExecutionState) => boolean;
+    isTaskComplete?: (
+        state: TaskBatchExecutionState,
+        planResult: ProviderResult,
+    ) => boolean;
     getRemainingObjective?: (state: TaskBatchExecutionState, planResult: ProviderResult) => string;
 }
 
@@ -462,17 +465,18 @@ export async function orchestrateTaskBatches(
         // Enforce at most 3 actions per planning response batch.
         const batchSteps = planResult.steps.slice(0, 3);
 
-        // 3. Validate the entire batch before executing it.
-        // Never execute an unvalidated batch.
-        for (const step of batchSteps) {
+        for (const step of planResult.steps) {
             const validation = handlers.validateAction(step.action);
+
             if (!validation.ok) {
                 return {
                     completed: false,
                     batchesExecuted,
                     totalActionsExecuted,
                     stoppedReason: "validation_failed",
-                    error: `Action rejected by validator: ${validation.reason ?? "unsupported action"}`,
+                    error: `Action rejected by validator: ${
+                        validation.reason ?? "unsupported action"
+                    }`,
                     completedActionsSummary,
                     lastObservation: latestObservation,
                 };
@@ -639,8 +643,12 @@ export async function orchestrateTaskBatches(
         };
 
         const isComplete = handlers.isTaskComplete
-            ? handlers.isTaskComplete(state)
-            : isTaskObjectiveComplete(planResult.summary, planResult.plan, remainingObjective);
+            ? handlers.isTaskComplete(state, planResult)
+            : isTaskObjectiveComplete(
+                planResult.summary,
+                planResult.plan,
+                remainingObjective,
+            );
 
         // 7. If complete, finish the task using the existing completion mechanism.
         if (isComplete) {
@@ -665,21 +673,15 @@ export async function orchestrateTaskBatches(
         }
     }
 
-    // Never infer that the full task is complete merely because the planner returned no more actions or batch limits reached without confirmation.
     return {
         completed: false,
         batchesExecuted,
         totalActionsExecuted,
-        stoppedReason:
-            totalActionsExecuted >= maxTotalSteps || batchesExecuted >= maxBatches
-                ? "error"
-                : "completed",
+        stoppedReason: "error",
         error:
             totalActionsExecuted >= maxTotalSteps
-                ? `Exceeded max total steps (${maxTotalSteps})`
-                : batchesExecuted >= maxBatches
-                  ? `Exceeded max planning batches (${maxBatches}) without completing the task objective`
-                  : undefined,
+                ? `Exceeded max total steps (${maxTotalSteps}) before confirming task completion`
+                : `Reached max batches (${maxBatches}) before confirming task completion`,
         completedActionsSummary,
         lastObservation: latestObservation,
     };
