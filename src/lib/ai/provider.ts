@@ -116,7 +116,7 @@ const responseSchema = z.object({
           .optional(),
       }),
     )
-    .max(12)
+    .max(3)
     .optional()
     .default([]),
 });
