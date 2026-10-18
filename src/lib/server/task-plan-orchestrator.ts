@@ -268,11 +268,49 @@ export function buildNextPlanningBatchInput(
             ...(baseInput.context ?? []).filter(
                 (line) =>
                     !line.startsWith("Completed actions:") &&
-                    !line.startsWith("Dependency plan:"),
+                    !line.startsWith("Dependency plan:") &&
+                    !line.startsWith("Do not re-execute:"),
             ),
+            `Do not re-execute already completed actions: ${continuation.completedActionsSummary.join("; ")}`.slice(0, 500),
             ...continuationContext,
         ].slice(0, 12),
     };
+}
+
+/**
+ * Reliable task completion detector.
+ * Confirms whether the original task objective has been achieved,
+ * preventing premature completion simply because a batch finished.
+ */
+export function isTaskObjectiveComplete(
+    summary?: string,
+    plan?: string[],
+    remainingObjective?: string,
+): boolean {
+    if (!summary && (!plan || plan.length === 0)) return false;
+    const text = `${summary ?? ""} ${plan?.join(" ") ?? ""} ${remainingObjective ?? ""}`.toLowerCase();
+    const completionMarkers = [
+        "task complete",
+        "task is complete",
+        "task completed",
+        "objective complete",
+        "objective achieved",
+        "goal achieved",
+        "goal complete",
+        "all actions completed",
+        "all steps completed",
+        "all steps complete",
+        "finished task",
+        "completed the task",
+        "no further actions required",
+        "no further actions needed",
+        "no further action needed",
+        "no more actions needed",
+        "nothing more to do",
+        "[complete]",
+        "[completed]",
+    ];
+    return completionMarkers.some((marker) => text.includes(marker));
 }
 
 /**
@@ -305,7 +343,8 @@ export interface TaskBatchExecutionHandlers {
     requiresApproval?: (step: unknown) => boolean;
     onApprovalRequired?: (step: unknown) => Promise<boolean>;
     onBatchComplete?: (batchIndex: number, result: ProviderResult) => void;
-    isTaskComplete: (state: TaskBatchExecutionState) => boolean;
+    isTaskComplete?: (state: TaskBatchExecutionState) => boolean;
+    getRemainingObjective?: (state: TaskBatchExecutionState, planResult: ProviderResult) => string;
 }
 
 export interface TaskBatchOrchestrationResult {
@@ -344,8 +383,9 @@ export async function orchestrateTaskBatches(
     let batchesExecuted = 0;
     let totalActionsExecuted = 0;
     const completedActionsSummary: string[] = [];
+    const executedActionKeys = new Set<string>();
     let latestObservation: string | undefined;
-    const remainingObjective = initialInput.userRequest;
+    let remainingObjective = initialInput.userRequest;
 
     while (batchesExecuted < maxBatches && totalActionsExecuted < maxTotalSteps) {
         if (handlers.isCancelled?.()) {
@@ -391,6 +431,24 @@ export async function orchestrateTaskBatches(
                     completedActionsSummary,
                     lastObservation: latestObservation,
                 };
+            }
+
+            const actionKey = JSON.stringify({
+                kind: step.action.kind,
+                targetId: step.action.targetId,
+                text: (step.action as { text?: string }).text,
+                keys: (step.action as { keys?: string }).keys,
+                x: (step.action as { x?: number }).x,
+                y: (step.action as { y?: number }).y,
+            });
+
+            // Prevent duplicate action execution during batch continuations
+            if (
+                executedActionKeys.has(actionKey) &&
+                step.action.kind !== "wait" &&
+                step.action.kind !== "read_screen"
+            ) {
+                continue;
             }
 
             if (step.requiresApproval || handlers.requiresApproval?.(step)) {
@@ -448,6 +506,7 @@ export async function orchestrateTaskBatches(
             }
 
             totalActionsExecuted++;
+            executedActionKeys.add(actionKey);
             const actionDesc =
                 (step.action as { description?: string })?.description ??
                 step.action.kind;
@@ -473,13 +532,34 @@ export async function orchestrateTaskBatches(
         batchesExecuted++;
         handlers.onBatchComplete?.(batchesExecuted, planResult);
 
+        // Update remainingObjective after every successfully executed batch instead of repeatedly using the original task description unchanged
+        if (handlers.getRemainingObjective) {
+            remainingObjective = handlers.getRemainingObjective(
+                {
+                    remainingObjective,
+                    completedActionsSummary,
+                    latestObservation,
+                },
+                planResult,
+            );
+        } else {
+            const recentActions = planResult.steps.map(
+                (s) => (s.action as { description?: string })?.description ?? s.action.kind,
+            );
+            remainingObjective = `Remaining objective for: ${initialInput.userRequest} (completed so far: ${recentActions.join(", ")})`.slice(0, 500);
+        }
+
         const state: TaskBatchExecutionState = {
             remainingObjective,
             completedActionsSummary,
             latestObservation,
         };
 
-        if (handlers.isTaskComplete(state)) {
+        const isComplete = handlers.isTaskComplete
+            ? handlers.isTaskComplete(state)
+            : isTaskObjectiveComplete(planResult.summary, planResult.plan, remainingObjective);
+
+        if (isComplete) {
             return {
                 completed: true,
                 batchesExecuted,

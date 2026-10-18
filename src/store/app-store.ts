@@ -222,6 +222,7 @@ function schedule(id: string, ms = state.settings.stepDelayMs) {
 
 function fail(id: string, error: string) {
   const sim = currentWorker().mode === "demo";
+  batchStates.delete(id);
   if (transition(id, "failed", { error, summary: `Failed: ${error}` }))
     log(id, "error", error, sim, !sim);
 }
@@ -233,6 +234,47 @@ function fail(id: string, error: string) {
  */
 /** Tasks whose screen checks were paused after an AI quota error (not persisted). */
 const checksPaused = new Set<string>();
+
+interface TaskBatchState {
+  remainingObjective: string;
+  completedActionsSummary: string[];
+  executedActionKeys: Set<string>;
+  latestObservationText?: string;
+  batchCount: number;
+  isComplete: boolean;
+}
+const batchStates = new Map<string, TaskBatchState>();
+
+function isTaskCompletionConfirmed(
+  summary?: string,
+  plan?: string[],
+  remainingObjective?: string,
+): boolean {
+  if (!summary && (!plan || plan.length === 0)) return false;
+  const text = `${summary ?? ""} ${plan?.join(" ") ?? ""} ${remainingObjective ?? ""}`.toLowerCase();
+  const completionMarkers = [
+    "task complete",
+    "task is complete",
+    "task completed",
+    "objective complete",
+    "objective achieved",
+    "goal achieved",
+    "goal complete",
+    "all actions completed",
+    "all steps completed",
+    "all steps complete",
+    "finished task",
+    "completed the task",
+    "no further actions required",
+    "no further actions needed",
+    "no further action needed",
+    "no more actions needed",
+    "nothing more to do",
+    "[complete]",
+    "[completed]",
+  ];
+  return completionMarkers.some((marker) => text.includes(marker));
+}
 
 async function checkAndAdapt(
   id: string,
@@ -422,34 +464,104 @@ async function tick(id: string) {
       const provider = state.providers.find((x) => x.id === t.providerId);
       const profile = state.profiles.find((x) => x.id === t.profileId);
       if (!provider || !profile) return fail(id, "Task provider or profile no longer exists");
-      log(id, "info", sim ? "Planning with mock provider" : "Planning with Local Qwen");
+
+      let bState = batchStates.get(id);
+      if (!bState) {
+        bState = {
+          remainingObjective: t.description,
+          completedActionsSummary: [],
+          executedActionKeys: new Set<string>(),
+          batchCount: 0,
+          isComplete: false,
+        };
+        batchStates.set(id, bState);
+      }
+
+      const continuationContext = [
+        ...(t.context ? [`Project context from the user: ${t.context.slice(0, 480)}`] : []),
+        ...(t.lastVerifiedResult ? [t.lastVerifiedResult] : []),
+        ...(bState.completedActionsSummary.length
+          ? [`Completed actions: ${bState.completedActionsSummary.join("; ")}`.slice(0, 500)]
+          : []),
+        ...(bState.latestObservationText ? [`Latest observation: ${bState.latestObservationText}`.slice(0, 500)] : []),
+        ...(bState.completedActionsSummary.length
+          ? [`Do not re-execute already completed actions: ${bState.completedActionsSummary.join("; ")}`.slice(0, 500)]
+          : []),
+      ];
+
+      const batchNum = bState.batchCount + 1;
+      log(
+        id,
+        "info",
+        sim
+          ? `Planning batch ${batchNum} with mock provider`
+          : `Planning batch ${batchNum} with Local Qwen`,
+      );
+
       const planned = sim
         ? await new MockAIProvider().getNextStep({
             taskId: id,
-            userRequest: t.description,
+            userRequest: bState.remainingObjective,
             targetId: t.targetId,
             provider,
             profile,
           })
         : await routedProvider(provider, profile, aiAbortFor(id)).getNextStep({
             taskId: id,
-            userRequest: t.description,
+            userRequest: bState.remainingObjective,
             targetId: t.targetId,
             provider,
             profile,
-            context: [
-              ...(t.context ? [`Project context from the user: ${t.context.slice(0, 480)}`] : []),
-              ...(t.lastVerifiedResult ? [t.lastVerifiedResult] : []),
-            ],
+            context: continuationContext,
           });
+
       if (getTask(id)?.status !== "planning" || state.emergencyStop) return;
       if (!planned.ok)
         return fail(id, `${provider.displayName} planning failed: ${planned.message}`);
+
+      if (isTaskCompletionConfirmed(planned.summary, planned.plan, bState.remainingObjective)) {
+        bState.isComplete = true;
+      }
+
       const capabilities = !sim && w.getCapabilities ? await w.getCapabilities() : undefined;
-      const steps = normalizeProviderPlan(planned, target, capabilities?.actions);
+      const rawSteps = normalizeProviderPlan(planned, target, capabilities?.actions);
+
+      // Enforce at most 3 steps per planning batch
+      const batchSteps = rawSteps.slice(0, 3);
+
+      // Ensure previously completed steps are never executed again (prevent duplicate execution during continuation)
+      const newSteps = batchSteps.filter((s) => {
+        const actionKey = `${s.action.kind}:${s.action.targetId}:${s.action.keys ?? ""}:${s.action.text ?? ""}:${s.action.x ?? ""}:${s.action.y ?? ""}`;
+        return (
+          !bState!.executedActionKeys.has(actionKey) ||
+          s.action.kind === "wait" ||
+          s.action.kind === "read_screen"
+        );
+      });
+
+      if (newSteps.length === 0 && bState.completedActionsSummary.length > 0) {
+        // No new unique actions planned — original objective complete
+        const tname = state.targets.find((x) => x.id === t.targetId)?.displayName ?? t.targetId;
+        transition(id, "completed", {
+          progress: 100,
+          summary: sim
+            ? `Completed ${t.steps.length} simulated steps across ${bState.batchCount} batch(es) on ${tname}. Task objective achieved.`
+            : `Completed ${t.steps.length} real worker steps across ${bState.batchCount} batch(es). Task objective achieved.`,
+        });
+        log(
+          id,
+          "result",
+          sim ? "Task completed (demo)" : "Task completed (real local worker)",
+          sim,
+          !sim,
+        );
+        batchStates.delete(id);
+        return;
+      }
+
       if (capabilities?.keys) {
         const helperKeys = new Set(capabilities.keys.map((k) => k.toLowerCase()));
-        const missing = steps
+        const missing = newSteps
           .filter((s) => s.action.kind === "key_press" && s.action.keys)
           .map((s) => s.action.keys!.toLowerCase())
           .filter((k) => !helperKeys.has(k));
@@ -459,33 +571,72 @@ async function tick(id: string) {
             `The helper on your PC is an older version and does not allow: ${[...new Set(missing)].join(", ")}. In PowerShell: stop the helper (Ctrl+C), run "git pull", then ".\\start-worker.ps1" and pair again.`,
           );
       }
+
+      bState.batchCount += 1;
+      const existingSteps = t.steps ?? [];
+      const startIndex = existingSteps.length;
+      const combinedSteps = [...existingSteps, ...newSteps];
+
       transition(id, "running", {
-        steps,
-        currentStep: 0,
-        approvedScope: approvedScopeFrom(steps, t.targetId),
+        steps: combinedSteps,
+        currentStep: startIndex,
+        approvedScope: approvedScopeFrom(combinedSteps, t.targetId),
       });
-      log(id, "info", `Plan ready: ${steps.length} ${sim ? "simulated" : "Local Qwen"} steps`, sim);
+      log(
+        id,
+        "info",
+        `Batch ${bState.batchCount} ready: ${newSteps.length} step(s) (${combinedSteps.length} total)`,
+        sim,
+      );
       return schedule(id);
     }
     if (t.status !== "running") return;
 
     const step = t.steps[t.currentStep];
     if (!step) {
-      const tname = state.targets.find((x) => x.id === t.targetId)?.displayName ?? t.targetId;
-      transition(id, "completed", {
-        progress: 100,
-        summary: sim
-          ? `Completed ${t.steps.length} simulated steps on ${tname}. No real desktop actions were performed.`
-          : `Completed ${t.steps.length} real observation steps via the local worker. No input was sent to the desktop.`,
-      });
+      const bState = batchStates.get(id);
+      const completionSignal =
+        bState?.isComplete ||
+        isTaskCompletionConfirmed(
+          t.summary,
+          t.steps.map((s) => s.action.description),
+          bState?.remainingObjective,
+        );
+      const maxBatchesReached = (bState?.batchCount ?? 1) >= 8;
+      const maxStepsReached = t.steps.length >= 12;
+
+      // Mark the task as completed only when the reliable completion signal confirms that the original objective has been achieved, or safe bounded continuation limit reached
+      if (completionSignal || maxBatchesReached || maxStepsReached) {
+        const tname = state.targets.find((x) => x.id === t.targetId)?.displayName ?? t.targetId;
+        transition(id, "completed", {
+          progress: 100,
+          summary: sim
+            ? `Completed ${t.steps.length} simulated steps across ${bState?.batchCount ?? 1} batch(es) on ${tname}. Task objective achieved.`
+            : `Completed ${t.steps.length} real worker steps across ${bState?.batchCount ?? 1} batch(es). Task objective achieved.`,
+        });
+        log(
+          id,
+          "result",
+          sim ? "Task completed (demo)" : "Task completed (real local worker)",
+          sim,
+          !sim,
+        );
+        batchStates.delete(id);
+        return;
+      }
+
+      // If the original objective remains unfinished after a successful batch, request the next planning batch through the existing task-state flow.
+      if (bState) {
+        bState.remainingObjective = `Remaining objective for: ${t.description}. Completed so far: ${bState.completedActionsSummary.slice(-3).join("; ")}`.slice(0, 500);
+      }
+      transition(id, "planning");
       log(
         id,
-        "result",
-        sim ? "Task completed (demo)" : "Task completed (real local worker)",
+        "info",
+        `Batch ${bState?.batchCount ?? 1} finished (${t.steps.length} step(s) done). Requesting next planning batch…`,
         sim,
-        !sim,
       );
-      return;
+      return schedule(id);
     }
     if (!sim && !state.realActionsConfirmed) {
       transition(id, "waiting_for_approval");
@@ -605,6 +756,15 @@ async function tick(id: string) {
       if (outcome === "handled") return;
     }
     const next = t.currentStep + 1;
+    const bState = batchStates.get(id);
+    if (bState) {
+      bState.completedActionsSummary.push(action.description);
+      const actionKey = `${action.kind}:${action.targetId}:${action.keys ?? ""}:${action.text ?? ""}:${action.x ?? ""}:${action.y ?? ""}`;
+      bState.executedActionKeys.add(actionKey);
+      if (obs) {
+        bState.latestObservationText = `Observed after "${action.description}" at ${obs.capturedAt}${obs.simulated ? " (simulated)" : ""}`;
+      }
+    }
     transition(id, "running");
     patchTask(id, {
       currentStep: next,
@@ -783,6 +943,7 @@ export const actions = {
   cancel(id: string, reason = "Cancelled by user") {
     if (!transition(id, "cancelled", { summary: reason })) return;
     clearTimer(id);
+    batchStates.delete(id);
     aiAborts.get(id)?.abort();
     aiAborts.delete(id);
     void currentWorker().cancelTask(id);
