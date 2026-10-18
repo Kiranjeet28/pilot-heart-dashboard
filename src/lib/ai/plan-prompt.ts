@@ -1,4 +1,4 @@
-﻿// Shared, secret-free planning prompt + schema for DesktopPilot's local Qwen planner.
+// Shared, secret-free planning prompt + schema for DesktopPilot's local Qwen planner.
 // Kept compact, stable and bounded for local llama-server context and prompt cache reuse.
 
 export interface PlanPromptInput {
@@ -13,13 +13,6 @@ export interface PlanPromptInput {
  * grammar cannot enforce â€” safety, target pinning, verification usage â€” stay explicit.
  */
 export const LOCAL_SYSTEM =
-<<<<<<< HEAD
-  "You are DesktopPilot's local task planner. JSON only, matching the schema. Max 12 safe steps. " +
-  "Actions: read_screen, click, type_text, key_press, wait, copy_selection, paste. " +
-  "Never use focus_window; the real worker does not support it. " +
-  "Verify with worker_ok or screen_capture; text_match only with expectedText; clipboard only after copy_selection. " +
-  "Each step needs action, requiresApproval, and verification. Keep plan, summary, and descriptions brief.";
-=======
   "You are DesktopPilot's local task planner. Return JSON only, matching the exact schema. Max 12 safe steps. " +
   "REAL DESKTOP MODE RULES: Never generate focus_window in Real Desktop mode. " +
   "Use only action kinds explicitly supported by the real desktop worker's action schema. Never invent or use unsupported worker actions. " +
@@ -29,8 +22,7 @@ export const LOCAL_SYSTEM =
   "Never use focus_window, even as a fallback, in Real Desktop mode. Do not substitute unsupported action names for prohibited actions. " +
   "For verification, use only verification methods supported by the actual worker schema, such as worker_ok or screen_capture when available. Use text_match only when expectedText is provided. Use clipboard verification only after copy_selection has been performed and clipboard data is available. Never invent verification types or fields. " +
   "Every step must include action, requiresApproval, and verification, using the exact required schema fields and types. " +
-  "Keep the plan, summary, and descriptions brief. Return valid JSON only: no Markdown, code fences, comments, or explanatory text."; 
->>>>>>> origin/fix/qwen-click-coordinates
+  "Keep the plan, summary, and descriptions brief. Return valid JSON only: no Markdown, code fences, comments, or explanatory text.";
 
 /** Strict JSON schema the model must emit. */
 export const PLAN_JSON_SCHEMA = {
