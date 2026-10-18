@@ -32,7 +32,7 @@ export const LOCAL_HARD_CAP_MS = 15 * 60_000;
 export const LOCAL_MAX_TOKENS = 700;
 export const LOCAL_TOKEN_BUDGET = 7000;
 export const CHARS_PER_TOKEN = 3.5;
-export const GEMINI_COOLDOWN_MS = 300_000;
+export const GEMINI_COOLDOWN_MS = 1800000;
 
 export const OFFLINE_MESSAGE =
   "Cannot reach local Qwen at http://127.0.0.1:8081. Start llama-server on your PC.";
