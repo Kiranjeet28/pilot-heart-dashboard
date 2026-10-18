@@ -135,7 +135,7 @@ export function validateTaskDecomposition(
     return { chunks };
 }
 
-import type { ProviderResult } from "@/lib/ai/provider";
+import type { ProviderResult, AIProviderResult } from "@/lib/ai/provider";
 
 export interface TaskPlanRequestInput {
     taskId?: string | undefined;
@@ -217,17 +217,18 @@ export function mergeChunkPlans(
 }
 
 export interface TaskBatchExecutionState {
-    originalObjective?: string;
+    originalObjective?: string | undefined;
     remainingObjective: string;
     completedActionsSummary: string[];
-    latestObservation?: string;
-    executionState?: Record<string, unknown>;
+    latestObservation?: string | undefined;
+    executionState?: Record<string, unknown> | undefined;
 }
 
 export interface TaskBatchOrchestratorOptions {
-    maxBatches?: number;
-    maxTotalSteps?: number;
-    maxRetriesPerAction?: number;
+    maxBatches?: number | undefined;
+    maxTotalSteps?: number | undefined;
+    maxRetriesPerAction?: number | undefined;
+    initialPlan?: ProviderResult | undefined;
 }
 
 /**
@@ -309,11 +310,27 @@ export function buildNextPlanningBatchInput(
  * preventing premature completion simply because a batch finished.
  */
 export function isTaskObjectiveComplete(
-    summary?: string,
-    plan?: string[],
-    remainingObjective?: string,
+    summary?: string | undefined,
+    plan?: string[] | undefined,
+    remainingObjective?: string | undefined,
+    options?: {
+        completedActionsCount?: number | undefined;
+        totalPlanStepsCount?: number | undefined;
+        batchesExecuted?: number | undefined;
+        planSteps?: unknown[] | undefined;
+    } | undefined,
 ): boolean {
-    if (!summary && (!plan || plan.length === 0)) return false;
+    if (!summary && (!plan || plan.length === 0)) {
+        if (
+            options?.batchesExecuted &&
+            options.batchesExecuted > 0 &&
+            options.planSteps &&
+            options.planSteps.length === 0
+        ) {
+            return true;
+        }
+        return false;
+    }
     const text = `${summary ?? ""} ${plan?.join(" ") ?? ""}`.toLowerCase();
     const completionMarkers = [
         "task complete",
@@ -335,8 +352,21 @@ export function isTaskObjectiveComplete(
         "nothing more to do",
         "[complete]",
         "[completed]",
+        "done",
+        "finished",
     ];
-    return completionMarkers.some((marker) => text.includes(marker));
+    if (completionMarkers.some((marker) => text.includes(marker))) {
+        return true;
+    }
+    if (
+        options?.batchesExecuted &&
+        options.batchesExecuted > 0 &&
+        options.planSteps &&
+        options.planSteps.length === 0
+    ) {
+        return true;
+    }
+    return false;
 }
 
 /**
@@ -348,8 +378,8 @@ export function isTaskObjectiveComplete(
 export async function requestNextPlanningBatch(
     baseInput: TaskPlanRequestInput,
     continuation: TaskBatchExecutionState,
-    planFn?: (input: TaskPlanRequestInput) => Promise<ProviderResult>,
-): Promise<ProviderResult> {
+    planFn?: ((input: TaskPlanRequestInput) => Promise<AIProviderResult>) | undefined,
+): Promise<AIProviderResult> {
     const nextInput = buildNextPlanningBatchInput(baseInput, continuation);
 
     if (planFn) {
@@ -368,28 +398,28 @@ export async function requestNextPlanningBatch(
 }
 
 export interface TaskBatchExecutionHandlers {
-    planBatch: (input: TaskPlanRequestInput) => Promise<ProviderResult>;
-    validateAction: (action: unknown) => { ok: boolean; reason?: string };
-    executeAction: (action: unknown) => Promise<{ ok: boolean; message?: string; error?: string }>;
+    planBatch: (input: TaskPlanRequestInput) => Promise<AIProviderResult>;
+    validateAction: (action: unknown) => { ok: boolean; reason?: string | undefined };
+    executeAction: (action: unknown) => Promise<{ ok: boolean; message?: string | undefined; error?: string | undefined }>;
     observeDesktop: () => Promise<{
         ok: boolean;
-        observation?: string;
-        observationId?: string;
-        stale?: boolean;
+        observation?: string | undefined;
+        observationId?: string | undefined;
+        stale?: boolean | undefined;
     }>;
-    isCancelled?: () => boolean;
-    isDeadlineExceeded?: () => boolean;
-    requiresApproval?: (step: unknown) => boolean;
-    onApprovalRequired?: (step: unknown) => Promise<boolean>;
-    onBatchStart?: (batchIndex: number, result: ProviderResult) => void;
-    onBatchComplete?: (batchIndex: number, result: ProviderResult) => void;
-    onActionStart?: (step: unknown, actionIndex: number) => void;
-    onActionComplete?: (step: unknown, actionIndex: number, result: { ok: boolean; message?: string }) => void;
-    isTaskComplete?: (
+    isCancelled?: (() => boolean) | undefined;
+    isDeadlineExceeded?: (() => boolean) | undefined;
+    requiresApproval?: ((step: unknown) => boolean) | undefined;
+    onApprovalRequired?: ((step: unknown) => Promise<boolean>) | undefined;
+    onBatchStart?: ((batchIndex: number, result: ProviderResult) => void) | undefined;
+    onBatchComplete?: ((batchIndex: number, result: ProviderResult) => void) | undefined;
+    onActionStart?: ((step: unknown, actionIndex: number) => void) | undefined;
+    onActionComplete?: ((step: unknown, actionIndex: number, result: { ok: boolean; message?: string | undefined }) => void) | undefined;
+    isTaskComplete?: ((
         state: TaskBatchExecutionState,
         planResult: ProviderResult,
-    ) => boolean;
-    getRemainingObjective?: (state: TaskBatchExecutionState, planResult: ProviderResult) => string;
+    ) => boolean) | undefined;
+    getRemainingObjective?: ((state: TaskBatchExecutionState, planResult: ProviderResult) => string) | undefined;
 }
 
 export interface TaskBatchOrchestrationResult {
@@ -404,9 +434,10 @@ export interface TaskBatchOrchestrationResult {
         | "observation_failed"
         | "validation_failed"
         | "deadline_exceeded"
-        | "error";
-    error?: string;
-    lastObservation?: string;
+        | "error"
+        | undefined;
+    error?: string | undefined;
+    lastObservation?: string | undefined;
     completedActionsSummary: string[];
 }
 
@@ -469,17 +500,49 @@ export async function orchestrateTaskBatches(
                       latestObservation,
                   });
 
-        // 2. Generate the next batch of at most 3 actions.
-        const planResult = await handlers.planBatch(currentBatchInput);
-        if (!planResult.ok || !planResult.steps.length) {
+        // 2. Obtain the next batch of at most 3 actions (reuse initial plan if provided, or ask planner).
+        let planResult: AIProviderResult;
+        if (
+            batchesExecuted === 0 &&
+            options?.initialPlan &&
+            options.initialPlan.ok &&
+            options.initialPlan.steps.length > 0
+        ) {
+            planResult = options.initialPlan;
+        } else {
+            planResult = await handlers.planBatch(currentBatchInput);
+        }
+
+        if (!planResult.ok) {
             return {
                 completed: false,
                 batchesExecuted,
                 totalActionsExecuted,
                 stoppedReason: "error",
-                error: planResult.ok
-                    ? "Planning batch returned no steps"
-                    : (planResult.message ?? "Planning batch failed"),
+                error: planResult.message ?? "Planning batch failed",
+                completedActionsSummary,
+                lastObservation: latestObservation,
+            };
+        }
+
+        // If a follow-up batch has 0 steps, the planner has concluded the objective is achieved
+        if (planResult.steps.length === 0) {
+            if (batchesExecuted > 0) {
+                return {
+                    completed: true,
+                    batchesExecuted,
+                    totalActionsExecuted,
+                    stoppedReason: "completed",
+                    completedActionsSummary,
+                    lastObservation: latestObservation,
+                };
+            }
+            return {
+                completed: false,
+                batchesExecuted,
+                totalActionsExecuted,
+                stoppedReason: "error",
+                error: "Planning batch returned no steps",
                 completedActionsSummary,
                 lastObservation: latestObservation,
             };
@@ -510,6 +573,7 @@ export async function orchestrateTaskBatches(
         handlers.onBatchStart?.(batchesExecuted + 1, planResult);
 
         // 4. Execute only validated actions, using existing worker safety checks.
+        let batchActionsExecuted = 0;
         for (const step of batchSteps) {
             if (handlers.isCancelled?.()) {
                 return {
@@ -632,6 +696,7 @@ export async function orchestrateTaskBatches(
                 };
             }
 
+            batchActionsExecuted++;
             totalActionsExecuted++;
             executedActionKeys.add(actionKey);
             const actionDesc =
@@ -660,6 +725,47 @@ export async function orchestrateTaskBatches(
         batchesExecuted++;
         handlers.onBatchComplete?.(batchesExecuted, planResult);
 
+        // Loop-progress guard: if no actions were executed in this batch (all duplicates)
+        if (batchActionsExecuted === 0 && batchSteps.length > 0) {
+            const state: TaskBatchExecutionState = {
+                originalObjective,
+                remainingObjective,
+                completedActionsSummary,
+                latestObservation,
+            };
+            const isComplete = handlers.isTaskComplete
+                ? handlers.isTaskComplete(state, planResult)
+                : isTaskObjectiveComplete(
+                    planResult.summary,
+                    planResult.plan,
+                    remainingObjective,
+                    {
+                        completedActionsCount: completedActionsSummary.length,
+                        batchesExecuted,
+                        planSteps: planResult.steps,
+                    },
+                );
+            if (isComplete) {
+                return {
+                    completed: true,
+                    batchesExecuted,
+                    totalActionsExecuted,
+                    stoppedReason: "completed",
+                    completedActionsSummary,
+                    lastObservation: latestObservation,
+                };
+            }
+            return {
+                completed: false,
+                batchesExecuted,
+                totalActionsExecuted,
+                stoppedReason: "error",
+                error: "Task loop stopped: no progress was made in the latest planning batch (all actions were duplicates)",
+                completedActionsSummary,
+                lastObservation: latestObservation,
+            };
+        }
+
         // 6. Evaluate whether the original objective is actually complete.
         const state: TaskBatchExecutionState = {
             originalObjective,
@@ -674,6 +780,11 @@ export async function orchestrateTaskBatches(
                 planResult.summary,
                 planResult.plan,
                 remainingObjective,
+                {
+                    completedActionsCount: completedActionsSummary.length,
+                    batchesExecuted,
+                    planSteps: planResult.steps,
+                },
             );
 
         // 7. If complete, finish the task using the existing completion mechanism.

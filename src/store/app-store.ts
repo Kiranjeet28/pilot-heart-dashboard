@@ -7,6 +7,7 @@ import type {
   ActivityKind,
   AppSettings,
   DesktopTarget,
+  PlannedStep,
   Provider,
   Task,
   TaskStatus,
@@ -398,17 +399,20 @@ async function checkAndAdapt(
     id,
     "info",
     `Plan adjusted (${(cur.replans ?? 0) + 1}/${MAX_REPLANS}). Before: ${before}. Now: ${after}`,
-    false,
-    true,
   );
-  schedule(id);
   return "handled";
 }
+
+const inFlightTicks = new Set<string>();
 
 async function tick(id: string) {
   timers.delete(id);
   const t = getTask(id);
   if (!t || state.emergencyStop) return;
+  if (inFlightTicks.has(id)) {
+    return;
+  }
+  inFlightTicks.add(id);
   const w = currentWorker();
   const sim = w.mode === "demo";
   const tag = sim ? "[SIMULATED]" : "[REAL]";
@@ -434,7 +438,7 @@ async function tick(id: string) {
       log(id, "info", sim ? "Preparing demo plan" : "Preparing real desktop plan", sim);
       return schedule(id);
     }
-    if (t.status === "planning") {
+    if (t.status === "planning" || t.status === "running") {
       const target = state.targets.find((x) => x.id === t.targetId);
       if (!target) return fail(id, "Desktop target no longer exists");
       const provider = state.providers.find((x) => x.id === t.providerId);
@@ -452,7 +456,26 @@ async function tick(id: string) {
         batchStates.set(id, bState);
       }
 
-      transition(id, "running");
+      if (t.status === "planning") {
+        transition(id, "running");
+      }
+
+      // If the task already has accepted/unexecuted steps (e.g. after user approval),
+      // reuse them as initialPlan so approved actions execute immediately without replanning.
+      const existingTask = getTask(id);
+      const unexecutedSteps = (existingTask?.steps ?? [])
+        .slice(existingTask?.currentStep ?? 0)
+        .filter((s) => !s.done);
+      const initialPlan =
+        unexecutedSteps.length > 0
+          ? {
+              ok: true as const,
+              plan: existingTask?.steps.map((s) => s.action.description) ?? [],
+              summary: existingTask?.summary || "Approved steps",
+              steps: unexecutedSteps,
+              requiresApproval: false,
+            }
+          : undefined;
 
       const orchestrationResult = await orchestrateTaskBatches(
         {
@@ -500,13 +523,18 @@ async function tick(id: string) {
           },
           onBatchStart: (batchIndex, result) => {
             if (bState) bState.batchCount = batchIndex;
-            const existingSteps = getTask(id)?.steps ?? [];
+            const curT = getTask(id);
+            const existingSteps = curT?.steps ?? [];
             const rawNormalized = normalizeProviderPlan(result, target);
             const batchSteps = rawNormalized.slice(0, 3);
-            const combinedSteps = [...existingSteps, ...batchSteps];
+            // If we are executing an initial plan that already matches existing steps, do not duplicate
+            const alreadyPresent = batchSteps.every((bs) =>
+              existingSteps.some((es) => es.action.description === bs.action.description),
+            );
+            const combinedSteps = alreadyPresent ? existingSteps : [...existingSteps, ...batchSteps];
             patchTask(id, {
               steps: combinedSteps,
-              currentStep: existingSteps.length,
+              currentStep: alreadyPresent ? (curT?.currentStep ?? 0) : existingSteps.length,
               approvedScope: approvedScopeFrom(combinedSteps, t.targetId),
             });
             log(
@@ -667,17 +695,26 @@ async function tick(id: string) {
             log(id, "approval", "Approval required before action execution", sim);
             return false;
           },
-          isTaskComplete: (state, planResult) =>
-            isTaskObjectiveComplete(
+          isTaskComplete: (state, planResult) => {
+            if (sim) return true;
+            return isTaskObjectiveComplete(
               planResult.summary,
               planResult.plan,
               state.remainingObjective,
-            ),
+              {
+                completedActionsCount: state.completedActionsSummary.length,
+                totalPlanStepsCount: getTask(id)?.steps.length ?? 0,
+                batchesExecuted: bState?.batchCount ?? 1,
+                planSteps: planResult.steps,
+              },
+            );
+          },
         },
         {
           maxBatches: PLAN_CHUNK_MAX_COUNT,
           maxTotalSteps: PLAN_MAX_TOTAL_STEPS,
           maxRetriesPerAction: t.maxRetries ?? 2,
+          initialPlan,
         },
       );
 
@@ -712,14 +749,11 @@ async function tick(id: string) {
       }
       return;
     }
-
-    if (t.status === "running") {
-      transition(id, "planning");
-      return schedule(id);
-    }
   } catch (e) {
     if (e instanceof WorkerUnavailableError) fail(id, e.message);
     else fail(id, e instanceof Error ? e.message : "Unknown error");
+  } finally {
+    inFlightTicks.delete(id);
   }
 }
 

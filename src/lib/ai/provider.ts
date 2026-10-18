@@ -11,14 +11,14 @@ export type ProviderErrorCode =
   | "unknown";
 
 export interface AIRequest {
-  taskId?: string;
+  taskId?: string | undefined;
   userRequest: string;
-  targetId?: string;
+  targetId?: string | undefined;
   provider: Provider;
-  profile?: AccountProfile;
-  context?: string[];
-  modelOverride?: string;
-  timeoutMs?: number;
+  profile?: AccountProfile | undefined;
+  context?: string[] | undefined;
+  modelOverride?: string | undefined;
+  timeoutMs?: number | undefined;
 }
 
 export interface ProviderResult {
@@ -97,6 +97,15 @@ const actionSchema = z
     ...(action.observationId !== undefined ? { observationId: action.observationId } : {}),
   }));
 
+export function formatZodError(error: z.ZodError): string {
+  return error.issues
+    .map((issue) => {
+      const path = issue.path.join(".");
+      return path ? `${path}: ${issue.message}` : issue.message;
+    })
+    .join("; ");
+}
+
 const responseSchema = z.object({
   plan: z.array(z.string()).default([]),
   summary: z.string().min(1).max(2000).optional(),
@@ -116,18 +125,57 @@ const responseSchema = z.object({
           .optional(),
       }),
     )
-    .max(3)
+    .max(12)
     .optional()
     .default([]),
 });
 
 export function normalizeProviderResponse(data: unknown): ProviderResult {
-  const parsed = typeof data === "string" ? JSON.parse(data) : data;
+  let parsed = data;
+  if (typeof data === "string") {
+    let text = data.trim();
+    if (text.startsWith("```")) {
+      text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+    }
+    const match = text.match(/\{[\s\S]*\}/);
+    parsed = JSON.parse(match ? match[0] : text);
+  }
+
+  // Safe normalization: if steps contains direct action objects without the 'action' wrapper
+  if (
+    parsed &&
+    typeof parsed === "object" &&
+    "steps" in parsed &&
+    Array.isArray((parsed as { steps: unknown }).steps)
+  ) {
+    const rawSteps = (parsed as { steps: unknown[] }).steps;
+    const normalizedSteps = rawSteps.map((step) => {
+      if (step && typeof step === "object") {
+        const stepObj = step as Record<string, unknown>;
+        if ("action" in stepObj && stepObj["action"] && typeof stepObj["action"] === "object") {
+          return step;
+        }
+        if ("kind" in stepObj) {
+          const requiresApproval = stepObj["requiresApproval"];
+          const verification = stepObj["verification"];
+          const actionProps = { ...stepObj };
+          delete actionProps["requiresApproval"];
+          delete actionProps["verification"];
+          return {
+            action: actionProps,
+            ...(requiresApproval !== undefined ? { requiresApproval } : {}),
+            ...(verification !== undefined ? { verification } : {}),
+          };
+        }
+      }
+      return step;
+    });
+    parsed = { ...parsed, steps: normalizedSteps };
+  }
+
   const payload = responseSchema.safeParse(parsed);
   if (!payload.success) {
-    throw new Error(
-      `Malformed provider response: ${payload.error.issues.map((issue) => issue.message).join("; ")}`,
-    );
+    throw new Error(`Malformed provider response: ${formatZodError(payload.error)}`);
   }
   const output = payload.data;
   const steps = output.steps.length

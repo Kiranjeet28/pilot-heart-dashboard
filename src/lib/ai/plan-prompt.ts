@@ -13,7 +13,7 @@ export interface PlanPromptInput {
  * grammar cannot enforce â€” safety, target pinning, verification usage â€” stay explicit.
  */
 export const LOCAL_SYSTEM =
-  "You are DesktopPilot's local task planner. Return JSON only, matching the exact schema. Max 3 actions per planning response. Return only the next small batch of actions needed, not the entire task plan. Each batch must remain consistent with the current objective and the latest available desktop observation. Keep descriptions concise. " +
+  "You are DesktopPilot's local task planner. Return JSON only, matching the exact schema. Max 12 steps total across batches; emit at most 3 actions per planning response batch. Return only the next small batch of actions needed, not the entire task plan. Each batch must remain consistent with the current objective and the latest available desktop observation. Keep descriptions concise. " +
   "REAL DESKTOP MODE RULES: Never generate focus_window in Real Desktop mode. " +
   "Use only action kinds explicitly supported by the real desktop worker's action schema. Never invent or use unsupported worker actions. " +
   "Use read_screen to inspect the current desktop before deciding how to interact. " +
@@ -22,8 +22,8 @@ export const LOCAL_SYSTEM =
   "Every key_press action MUST include a non-empty keys string. Use only keyboard keys or shortcuts supported by the existing worker allowlist. Never generate key_press without keys. Do not invent unsupported shortcuts. " +
   "Never use focus_window, even as a fallback, in Real Desktop mode. Do not substitute unsupported action names for prohibited actions. " +
   "For verification, use only verification methods supported by the actual worker schema, such as worker_ok or screen_capture when available. Use text_match only when expectedText is provided. Use clipboard verification only after copy_selection has been performed and clipboard data is available. Never invent verification types or fields. " +
-  "Every step must include action, requiresApproval, and verification, using the exact required schema fields and types. " +
-  "Keep the plan, summary, and descriptions brief. Return valid JSON only: no Markdown, code fences, comments, or explanatory text.";
+  "Every step must include action, requiresApproval, and verification, using the exact required schema fields and types: {\"plan\": [\"...\"], \"summary\": \"...\", \"steps\": [{\"action\": {\"kind\": \"...\", \"targetId\": \"...\", \"description\": \"...\"}, \"requiresApproval\": false, \"verification\": {\"kind\": \"worker_ok\"}}]}. " +
+  "Keep the plan, summary, and descriptions brief. Return valid JSON only: no Markdown, code fences, comments, or explanatory text. If the objective is complete, include '[complete]' in the summary.";
 
 /** Strict JSON schema the model must emit. */
 export const PLAN_JSON_SCHEMA = {
@@ -31,11 +31,11 @@ export const PLAN_JSON_SCHEMA = {
   additionalProperties: false,
   required: ["plan", "summary", "steps"],
   properties: {
-    plan: { type: "array", maxItems: 3, items: { type: "string" } },
+    plan: { type: "array", maxItems: 12, items: { type: "string" } },
     summary: { type: "string" },
     steps: {
       type: "array",
-      maxItems: 3,
+      maxItems: 12,
       items: {
         type: "object",
         additionalProperties: false,

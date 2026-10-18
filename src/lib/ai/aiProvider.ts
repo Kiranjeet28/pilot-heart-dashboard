@@ -594,20 +594,46 @@ async function localOnce(
     };
   }
 
+  // Diagnostic classification: markdown fences, plain text, malformed JSON, or schema error
+  let cleaned = content.trim();
+  if (/```(?:json)?/i.test(cleaned)) {
+    cleaned = cleaned.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+  }
+
+  const match = cleaned.match(/\{[\s\S]*\}/);
+  if (!match) {
+    return {
+      result: fail(
+        "invalid_response",
+        `Local Qwen returned plain text without JSON: "${cleaned.slice(0, 80)}"`,
+      ),
+      ...meta,
+    };
+  }
+
+  const rawJson = match[0].trim();
+  let parsed: unknown;
+
   try {
-    // Extract the JSON object, including multiline responses.
-    const match = content.match(/\{[\s\S]*\}/);
-    const rawJson = (match ? match[0] : content).trim();
-
-    let parsed: unknown;
-
+    parsed = JSON.parse(rawJson);
+  } catch (parseErr) {
     try {
-      parsed = JSON.parse(rawJson);
-    } catch {
       // Repair common malformed JSON returned by the local model.
       parsed = JSON.parse(jsonrepair(rawJson));
+    } catch {
+      return {
+        result: fail(
+          "invalid_response",
+          parseErr instanceof Error
+            ? `Local Qwen returned invalid JSON: ${parseErr.message}`
+            : "Local Qwen returned malformed JSON",
+        ),
+        ...meta,
+      };
     }
+  }
 
+  try {
     return {
       result: normalizeProviderResponse(parsed),
       ...meta,
