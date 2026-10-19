@@ -141,7 +141,11 @@ function switchTo(next: ActiveProvider, why?: string) {
 }
 
 // ---------- helpers ----------
-const trimBase = (u: string) => (u.trim() || DEFAULT_LOCAL_BASE_URL).replace(/\/+$/, "");
+const trimBase = (u: string) => {
+  const value = (u.trim() || DEFAULT_LOCAL_BASE_URL).replace(/\/+$/, "");
+  if (!isLoopbackUrl(value)) throw new Error("Local model URL must use localhost or 127.0.0.1.");
+  return value;
+};
 
 /** Drop keys whose value is undefined so returns satisfy exactOptionalPropertyTypes. */
 function compact<T extends Record<string, unknown>>(obj: T) {
@@ -159,8 +163,9 @@ export function isLoopbackUrl(v: string): boolean {
   try {
     const u = new URL(v);
     return (
-      (u.protocol === "http:" || u.protocol === "https:") &&
-      ["127.0.0.1", "localhost"].includes(u.hostname)
+      u.protocol === "http:" &&
+      ["127.0.0.1", "localhost"].includes(u.hostname) &&
+      !u.username && !u.password && !u.search && !u.hash
     );
   } catch {
     return false;
@@ -533,7 +538,7 @@ async function localOnce(
 
   const out = await streamLocalChat(
     {
-      model: "qwen",
+      model: request.modelOverride?.trim() || request.provider.model.trim() || "qwen",
       messages,
       temperature: 0.2,
       max_tokens: isSimpleDesktopTask(request.userRequest)

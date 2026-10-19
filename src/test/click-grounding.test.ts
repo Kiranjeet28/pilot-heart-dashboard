@@ -50,6 +50,12 @@ describe("Qwen click grounding and approved launch", () => {
     expect(result.steps[0]?.action.kind).toBe("wait");
   });
 
+  it("rejects unsupported fields and invalid waits at the action boundary", () => {
+    expect(validateAction({ kind: "wait", targetId: "desktop", description: "Wait", durationMs: 10001 }, { strict: true }).ok).toBe(false);
+    expect(validateAction({ kind: "wait", targetId: "desktop", description: "Wait", durationMs: Number.NaN }, { strict: true }).ok).toBe(false);
+    expect(validateAction({ kind: "read_screen", targetId: "desktop", description: "Read", x: 1 } as never, { strict: true }).ok).toBe(false);
+  });
+
   it("exposes only approved Notepad launch as a non-coordinate option for open notepad", () => {
     expect(LOCAL_SYSTEM).toContain("launch_app supports only app=notepad");
     expect(PLAN_JSON_SCHEMA.properties.steps.items.properties.action.properties.kind.enum).toContain("launch_app");

@@ -123,6 +123,10 @@ export function isRateLimited(
     return true;
   }
   bucket.push(now);
+  if (!rateBuckets.has(key) && rateBuckets.size >= 256) {
+    const oldestKey = rateBuckets.keys().next().value as string | undefined;
+    if (oldestKey) rateBuckets.delete(oldestKey);
+  }
   rateBuckets.set(key, bucket);
   return false;
 }
@@ -183,6 +187,28 @@ export function toGeminiResponseSchema(schema: unknown): unknown {
     return out;
   }
   return schema;
+}
+
+function getLocalModelConfig() {
+  const baseUrl = process.env["LOCAL_LLM_BASE_URL"]?.trim() || "http://127.0.0.1:8081";
+  let parsed: URL;
+  try {
+    parsed = new URL(baseUrl);
+  } catch {
+    throw Object.assign(new Error("LOCAL_LLM_BASE_URL must be a valid loopback URL."), { code: "invalid_configuration", status: 503 });
+  }
+  if (!(["127.0.0.1", "localhost"].includes(parsed.hostname) && parsed.protocol === "http:" && !parsed.username && !parsed.password && !parsed.search && !parsed.hash)) {
+    throw Object.assign(new Error("LOCAL_LLM_BASE_URL must use http://localhost or http://127.0.0.1 without credentials or query parameters."), { code: "invalid_configuration", status: 503 });
+  }
+  const model = process.env["LOCAL_LLM_MODEL"]?.trim() || "qwen";
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(model)) {
+    throw Object.assign(new Error("LOCAL_LLM_MODEL is invalid."), { code: "invalid_configuration", status: 503 });
+  }
+  const normalized = baseUrl.replace(/\/+$/, "");
+  return {
+    model,
+    endpoint: normalized.endsWith("/v1") ? `${normalized}/chat/completions` : `${normalized}/v1/chat/completions`,
+  };
 }
 
 async function generateGeminiTaskPlan(input: TaskPlanRequestInput): Promise<ProviderResult> {
@@ -382,13 +408,11 @@ export async function generateTaskPlan(input: TaskPlanRequestInput): Promise<Pro
   }
   if (input.providerId === "grok") return generateGrokTaskPlan(input);
   if (input.providerId === "gemini") return generateGeminiTaskPlan(input);
-  const rawBase = "http://127.0.0.1:8081";
-  const baseUrl = rawBase.replace(/\/+$/, "");
-  const endpoint = baseUrl.endsWith("/v1")
-    ? `${baseUrl}/chat/completions`
-    : `${baseUrl}/v1/chat/completions`;
-
-  const model = "qwen";
+  const { endpoint, model: configuredModel } = getLocalModelConfig();
+  const model = input.modelOverride?.trim() || configuredModel;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(model)) {
+    throw Object.assign(new Error("The selected local model name is invalid."), { code: "invalid_request", status: 400 });
+  }
   const timeoutMs = input.timeoutMs ?? 300000;
 
   type LocalResponse = {
@@ -721,9 +745,7 @@ export async function handleTaskPlanRequest(request: Request): Promise<Response>
     );
   }
 
-  const bucketKey =
-    request.headers.get("origin") ?? request.headers.get("referer") ?? "headerless-client";
-  if (isRateLimited(bucketKey)) {
+  if (isRateLimited("task-plan-api")) {
     return Response.json(
       {
         ok: false,
@@ -735,7 +757,7 @@ export async function handleTaskPlanRequest(request: Request): Promise<Response>
   }
 
   const raw = await request.text();
-  if (raw.length > MAX_BODY_BYTES) {
+  if (new TextEncoder().encode(raw).byteLength > MAX_BODY_BYTES) {
     return Response.json(
       { ok: false, code: "payload_too_large", message: "Request body exceeds the 64 KB limit." },
       { status: 413 },

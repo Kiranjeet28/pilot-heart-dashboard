@@ -73,7 +73,7 @@ const actionSchema = z
     durationMs: z.number().int().min(0).max(60000).optional(),
     observationId: z.string().optional(),
     requiresApproval: z.boolean().optional(),
-  })
+  }).strict()
   .superRefine((action, ctx) => {
     if (action.kind === "click" && (action.x == null || action.y == null)) {
       ctx.addIssue({
@@ -136,13 +136,13 @@ const responseSchema = z.object({
             expectedText: z.string().max(2000).optional(),
             allowPartial: z.boolean().optional(),
           })
-          .optional(),
-      }),
+        .optional(),
+      }).strict(),
     )
     .max(12)
     .optional()
     .default([]),
-});
+}).strict();
 
 export function normalizeProviderResponse(data: unknown): ProviderResult {
   let parsed = data;

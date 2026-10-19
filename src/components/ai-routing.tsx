@@ -106,7 +106,7 @@ export function AiRoutingPanel() {
     <Panel title="AI provider settings">
       <div className="space-y-5">
         <p className="text-sm text-muted-foreground">Choose Local Model, Gemini, or Grok for each task on Main. Provider requests are sent only to the selected provider. API keys stay in the server environment and are never stored in this browser.</p>
-        {local ? <ProviderRow provider={local} /> : null}
+        {local ? <ProviderRow provider={local} onModel={updateModel} /> : null}
         <div className="space-y-2">
           <Label htmlFor="local-url">Local model URL</Label>
           <div className="flex gap-2"><Input id="local-url" value={url} onChange={(event) => setUrl(event.target.value)} onBlur={saveLocalUrl} /><Button variant="outline" onClick={() => local && void testProvider(local)} disabled={localTesting}>{localTesting ? "Testing…" : "Test Local Model"}</Button></div>
@@ -131,8 +131,9 @@ function ServerProvider({ provider, envName, test, testState, onModel }: { provi
   </div>;
 }
 
-function ProviderRow({ provider }: { provider: Provider }) {
-  return <div className="flex items-center justify-between rounded-md border p-3"><div><p className="text-sm font-medium">{provider.displayName}</p><p className="text-xs text-muted-foreground">Model alias: <code className="font-mono">{provider.model}</code></p></div></div>;
+function ProviderRow({ provider, onModel }: { provider: Provider; onModel: (id: string, model: string) => void }) {
+  const [model, setModel] = useState(provider.model);
+  return <div className="space-y-2 rounded-md border p-3"><p className="text-sm font-medium">{provider.displayName}</p><div className="space-y-1"><Label htmlFor="local-model">Local model alias</Label><Input id="local-model" value={model} onChange={(event) => setModel(event.target.value)} onBlur={() => onModel(provider.id, model)} /></div><p className="text-xs text-muted-foreground">Model and loopback endpoint are used for local inference. The server route uses LOCAL_LLM_MODEL and LOCAL_LLM_BASE_URL.</p></div>;
 }
 
 function TestMessage({ status, message }: { status: TestState["state"]; message: string }) {

@@ -35,6 +35,14 @@ export function validateAction(a: ActionRequest, ctx: ValidationContext = {}): V
   if (!ALLOWED.includes(a.kind))
     return { ok: false, reason: `Action "${String(a.kind)}" is not allowed` };
   if (!a.targetId) return { ok: false, reason: "Action has no desktop target" };
+  const permitted = new Set(["kind", "targetId", "description", "__validated"]);
+  const kindFields: Partial<Record<ActionKind, string[]>> = {
+    launch_app: ["app"], click: ["x", "y", "observationId"], type_text: ["text"],
+    key_press: ["keys"], wait: ["durationMs"], paste: ["text"],
+  };
+  for (const field of kindFields[a.kind] ?? []) permitted.add(field);
+  const unexpected = Object.keys(a).find((field) => !permitted.has(field));
+  if (unexpected) return { ok: false, reason: `Field "${unexpected}" is not supported for ${a.kind}` };
   if (a.kind === "launch_app" && a.app !== "notepad")
     return { ok: false, reason: "launch_app supports only the approved notepad application" };
   const textLimit = ctx.strict ? MAX_ACTION_TEXT : MAX_TEXT;
@@ -76,7 +84,7 @@ export function validateAction(a: ActionRequest, ctx: ValidationContext = {}): V
   }
   if (
     a.kind === "wait" &&
-    (a.durationMs == null || a.durationMs < 0 || a.durationMs > (ctx.strict ? MAX_WAIT_MS : 30000))
+    (a.durationMs == null || !Number.isFinite(a.durationMs) || !Number.isInteger(a.durationMs) || a.durationMs < 0 || a.durationMs > (ctx.strict ? MAX_WAIT_MS : 30000))
   )
     return { ok: false, reason: `wait duration must be 0–${ctx.strict ? MAX_WAIT_MS : 30000} ms` };
   return { ok: true, action: { ...a, __validated: true } };

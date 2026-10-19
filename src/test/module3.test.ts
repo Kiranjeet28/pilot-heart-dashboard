@@ -109,6 +109,7 @@ function stubGatewayFetch() {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe("task manager and verification", () => {
@@ -450,6 +451,36 @@ describe("secure AI task-plan endpoint", () => {
     expect(response.status).toBe(200);
     const json = await response.json();
     expect(json.ok).toBe(true);
+  });
+
+  it("uses the validated local endpoint and model environment configuration", async () => {
+    vi.stubEnv("LOCAL_LLM_BASE_URL", "http://localhost:8123/v1");
+    vi.stubEnv("LOCAL_LLM_MODEL", "qwen-custom");
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const payload = JSON.parse(String(init?.body));
+      expect(payload.model).toBe("qwen-custom");
+      return Response.json({ choices: [{ message: { content: JSON.stringify({
+        plan: ["Inspect the screen"], summary: "Inspect the screen", steps: [{
+          action: { kind: "read_screen", targetId: "desktop", description: "Inspect the screen" },
+          requiresApproval: false,
+        }],
+      }) } }] });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await postPlan({ providerId: "qwen", userRequest: "Inspect the desktop" }, { origin: "http://localhost:3000" });
+    expect(response.status).toBe(200);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe("http://localhost:8123/v1/chat/completions");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses non-loopback local model destinations", async () => {
+    vi.stubEnv("LOCAL_LLM_BASE_URL", "http://example.com:8081");
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const response = await postPlan({ providerId: "qwen", userRequest: "Inspect the desktop" }, { origin: "http://localhost:3000" });
+    expect(response.status).toBe(503);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("routes Grok plans through xAI with the server-side key and strict shared schema", async () => {

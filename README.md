@@ -13,12 +13,9 @@
 
 # DesktopPilot
 
-A browser dashboard for supervising visual desktop-agent tasks, with two worker modes:
-
-- **DEMO** — a typed mock worker that simulates tasks end-to-end. Every simulated step is tagged `SIMULATED`.
-- **REAL LOCAL** — a Python worker that runs **on your own Windows PC** and performs a small allowlist of
-  screenshot, mouse and keyboard actions on your real desktop. It binds to `127.0.0.1` only and is never exposed
-  to the network.
+A browser dashboard for supervising desktop-agent tasks through an authenticated local Python worker. The
+production UI runs real tasks only; mocks are used by automated tests and are not task-runner adapters.
+The worker binds to `127.0.0.1` and accepts only a small allowlist of desktop actions.
 
 Real desktop control is **not confirmed** until you run the guided Notepad test (below) on your machine.
 
@@ -105,39 +102,26 @@ Invoke-RestMethod http://127.0.0.1:8765/health
 Stop behaviour: press **Stop** (or the header **Emergency Stop**) while the test runs — remaining steps are not
 sent, and the worker answers `423 worker_stopped` until the emergency stop is reset.
 
-## AI task planning (Local Qwen, Module 3)
+## AI task planning
 
-Task planning calls `POST /api/tasks/plan` (registered in `src/routes/api/tasks/plan.ts` →
-`src/lib/server/task-plan.ts`) or connects directly from the browser to local Qwen.
+The Main page offers Local Model, Gemini, and Grok. Selection is included in the planning request and each choice is routed to its matching implementation; provider errors do not silently switch providers. Local Model runs llama.cpp in the browser against the loopback URL in Settings. The server planning route uses `LOCAL_LLM_BASE_URL` and `LOCAL_LLM_MODEL` (defaults `http://127.0.0.1:8081` and `qwen`) and rejects non-loopback destinations. Gemini uses `GEMINI_API_KEY` / optional `GEMINI_MODEL`; Grok uses `XAI_API_KEY` / optional `XAI_MODEL`. Keep credentials in the server environment, never browser settings.
 
-- Planning runs exclusively through a local `llama-server` instance serving model alias `qwen`
-  at `http://127.0.0.1:8081`. Remote planning APIs (Google Gemini, Lovable AI Gateway) are not
-  used and require no API keys.
-- Security: the route accepts only (a) same-origin browser requests that positively prove it —
-  matching `Origin`/`Referer` (or `Sec-Fetch-Site: same-origin` plus a matching header) — or
-  (b) internal clients presenting `Authorization: Bearer <DESKTOPPILOT_SERVER_TOKEN>`.
-  Requests without origin evidence are rejected; bodies are capped at 64 KB and limited to
-  30 planning requests per origin per minute.
-- The planner prompt pins the selected desktop target ID, and both the server and client
-  planner (`normalizeProviderPlan`) reject steps that target another desktop, use a
-  non-allowlisted action, exceed 12 steps, or use `text_match` verification without
-  `expectedText`. Schemas: `worker_ok` and `screen_capture` always; `clipboard` for copy steps.
-- Verification: `screen_capture` needs a real screenshot; `text_match` compares
-  `expectedText` with text the worker returns. When the worker supplies no text (OCR is a
-  later extension), the step is recorded as **unverified** — never silently passed — and
-  execution continues without retry. Only genuine failures trigger the bounded 2-retry loop;
-  tasks also honor a global 10-minute deadline.
+`POST /api/tasks/plan` validates provider IDs, request schemas, target IDs, and generated actions. It requires positive same-origin evidence or `Authorization: Bearer <DESKTOPPILOT_SERVER_TOKEN>`, caps the request body at 64 KiB, and applies bounded rate limiting. The text-only planner receives no screenshot and must not produce click steps. A click requires coordinates tied to a fresh screenshot observation and is rejected if visual grounding is unavailable. The worker independently revalidates actions and bounds.
 
-### Acceptance test (real local Qwen + real worker)
+Supported worker actions include approved Notepad launch, click, type text (500 characters maximum), key press, wait (10,000 ms maximum), copy selection, and paste. The worker allowlist is the final enforcement boundary. The task runner validates a complete plan before executing it, applies target approval policy, bounds replanning and deadlines, and reports unavailable verification as unverified rather than claiming success. Emergency Stop blocks further worker actions.
 
-1. Start `llama-server` with model alias `qwen` on `http://127.0.0.1:8081`.
-2. Start and pair the worker (sections 2–3 above), keep the dashboard on **REAL LOCAL** with
-   the target's interaction mode set to _assisted_ or _autonomous_.
-3. Create a task such as "Open Notepad and type DesktopPilot test 123" on the target, and start it.
-4. Expected: a local Qwen plan appears, steps run one at a time on the real desktop with approval
-   prompts for input actions, and the task ends `completed` only if every verification passed
-   (or was honestly recorded as unverified).
+Server environment example (leave secrets out of documentation and source control):
 
+```dotenv
+LOCAL_LLM_BASE_URL=http://127.0.0.1:8081
+LOCAL_LLM_MODEL=qwen
+GEMINI_MODEL=gemini-3.8-flash
+GEMINI_API_KEY=
+XAI_MODEL=grok-4.7
+XAI_API_KEY=
+```
+
+For Local Model, configure the loopback endpoint and model alias in Settings. Use each provider's Test button to verify an actual inference response; configured values alone do not prove connectivity.
 ## Security model
 
 - The worker binds to `127.0.0.1` only; `Host` and `Origin` headers are checked against an allowlist (no `*`).
@@ -168,67 +152,6 @@ See the detailed table in [`worker/visual-agent/README.md`](worker/visual-agent/
 | `423 failsafe_triggered`                   | Mouse hit a screen corner; reset the Emergency Stop                                                                                                                                  |
 | Clicks land wrong                          | Use the main display (multi-monitor/DPI not supported yet)                                                                                                                           |
 
-## Module 3: Local Qwen task planning
+## See and adapt
 
-DesktopPilot keeps the AI planning layer separate from the desktop worker. Planning uses the local `llama-server` (model alias `qwen`) listening on `http://127.0.0.1:8081`. The dashboard routes planning through local Qwen directly or via `POST /api/tasks/plan`, returning bounded, schema-validated plans. The task runner then validates every action, applies target approval policy, executes through the paired worker, captures post-action observations, and requires verification before advancing.
-
-This project keeps the adapter logic in `src/lib/ai/provider.ts` and the task lifecycle helpers in `src/lib/tasks/*` so the worker remains allowlisted and the planner can be swapped without changing the worker contract. Demo mode uses the mock provider and worker through the same orchestration path. Remote planning services (Gemini, OpenAI, Anthropic) are not used for planning.
-
-Backend configuration example:
-
-```sh
-export LOCAL_LLM_BASE_URL="http://127.0.0.1:8081"
-export LOCAL_LLM_MODEL="qwen"
-```
-
-## Project layout
-
-```
-src/                     Dashboard (TanStack Start, React 19, Tailwind v4)
-  lib/types.ts           Task, action and worker types
-  lib/worker/            DesktopWorker interface, mock + local HTTP adapters, validation, token store
-  store/app-store.ts     Single source of truth for state and task lifecycle
-  routes/                Pages (dashboard, settings)
-worker/visual-agent/     Python worker (Windows), with tests using a fake desktop
-```
-
-## Worker-side development
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
-.\.venv\Scripts\python.exe -m pytest -q tests
-```
-
-Tests use a fake desktop and don't move your mouse.
-
-## Built with
-
-TanStack Start · TypeScript · React · Tailwind CSS · Python (worker)
-
-## Module 4: See and adapt
-
-In REAL LOCAL mode, after each step that changes the screen (click, typing, keys, focusing a window, paste) the dashboard takes a fresh screenshot and asks Gemini whether the step worked:
-
-- **Looks right**: the task continues.
-- **Could not tell**: recorded as unverified, and the task continues. It never counts as a pass.
-- **Unexpected screen**: Gemini plans the remaining steps again from the current screen. The new steps run without asking you again, **only if** they use the same target, action types, keys, and typed text you approved. If not, the task stops with "The plan needed actions you didn't approve. Start the task again to review them."
-
-Limits: at most 3 plan adjustments per task, 20 steps in total, and 15 seconds per check. Stop works at all times.
-
-**Privacy:** while this is on, screenshots of your screen are sent to Google Gemini (through Lovable AI, or with your `GEMINI_API_KEY` when you run locally). They are never saved. Turn it off in **Settings → See and adapt**. Demo mode only shows simulated checks.
-
-**Manual test (on your PC):** pair the helper, set the target to Notepad, and run "Open Notepad and type hello". Approve the plan, then close Notepad right after it opens. The timeline should show "Unexpected screen — adjusting plan", then "Plan adjusted (1/3)", and the task should reopen Notepad and finish. Also press Stop during "Checking the screen…" to confirm it halts.
-
-## Local model fallback (llama.cpp)
-
-When Gemini fails (quota, server error, network, bad answer), the dashboard can plan with a model running on your own PC.
-
-1. Start `llama-server` with the model alias `qwen` (for example via your `run-model.bat`).
-2. Open **Settings → AI provider**. Pick **Auto** (Gemini first, then local), **Gemini only**, or **Local only**. Then press **Test local model**.
-3. The header badge shows which AI is answering: **Gemini** (green), **Local** (blue), or **Offline** (red).
-
-After a Gemini failure, the app uses the local model for 30 minutes, or for the wait time Google gives. After that it tries Gemini again.
-
-**Port clash:** llama-server and the local dashboard both use port 8080 by default. If you run the dashboard on your PC, the app now expects llama-server on port 8081 — start it with `--port 8081`.
-
-**Limits:** the local model can't see screenshots, so screen checks are skipped while it's in use. Plans are slow on CPU (up to 30 minutes). The same safety checks apply to every local plan.
+After screen-changing actions, the app can send an in-memory screenshot to the server-side screen-check provider when adaptive checks are enabled. Check errors become unverified; only a clearly off-track result may trigger bounded replanning. Local Model planning itself is text-only and cannot ground clicks from a screenshot. Screenshots are not persisted. Configure the screen-check service credentials on the server and verify availability with a real task; no live connectivity is implied by having a key configured.

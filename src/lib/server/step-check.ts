@@ -182,12 +182,10 @@ const fail = (status: number, code: string, message: string) =>
 export async function handleStepCheckRequest(request: Request): Promise<Response> {
   if (request.method !== "POST") return fail(405, "invalid_method", "POST is required.");
   if (!isAuthorizedRequest(request)) return fail(401, "unauthorized", "Authentication required.");
-  const origin =
-    request.headers.get("origin") ?? request.headers.get("referer") ?? "headerless-client";
-  if (isRateLimited(`check:${origin}`, 60))
+  if (isRateLimited("task-check-api", 60))
     return fail(429, "rate_limited", "Too many screen checks. Try again shortly.");
   const raw = await request.text();
-  if (raw.length > MAX_BODY_CHARS)
+  if (new TextEncoder().encode(raw).byteLength > MAX_BODY_CHARS)
     return fail(413, "payload_too_large", "Screenshot is too large to check.");
   let body: unknown;
   try {
