@@ -799,7 +799,10 @@ export const actions = {
     if (state.hydrated) return;
     const config = load<Pick<AppState, "providers" | "profiles" | "targets">>("config");
     const savedProviders = config?.providers ?? DEFAULT_PROVIDERS;
-    const providers = savedProviders.map((provider) =>
+    const providersWithGrok = savedProviders.some((provider) => provider.id === "grok")
+      ? savedProviders
+      : [...savedProviders, ...DEFAULT_PROVIDERS.filter((provider) => provider.id === "grok")];
+    const providers = providersWithGrok.map((provider) =>
       provider.id === "gemini"
         ? {
             ...provider,
@@ -809,9 +812,14 @@ export const actions = {
         : provider,
     );
     const savedProfiles = config?.profiles ?? DEFAULT_PROFILES;
-    const profiles = savedProfiles.some((profile) => profile.providerId === "gemini")
-      ? savedProfiles
-      : [...savedProfiles, ...DEFAULT_PROFILES.filter((profile) => profile.providerId === "gemini")];
+    const profiles = [
+      ...savedProfiles,
+      ...DEFAULT_PROFILES.filter(
+        (profile) =>
+          (profile.providerId === "gemini" || profile.providerId === "grok") &&
+          !savedProfiles.some((saved) => saved.providerId === profile.providerId),
+      ),
+    ];
     const tasks = load<Task[]>("tasks") ?? [];
     const activity = load<ActivityEvent[]>("activity") ?? [];
     const settings = load<AppSettings & { emergencyStop?: boolean }>("settings");

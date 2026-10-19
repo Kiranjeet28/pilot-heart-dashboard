@@ -316,6 +316,17 @@ export class GeminiProvider implements ProviderAdapter {
   }
 }
 
+/** Grok plans through the same authenticated server route; XAI_API_KEY stays server-side. */
+export class GrokProvider implements ProviderAdapter {
+  readonly name = "Grok (xAI)";
+  readonly type = "custom" as const;
+  private readonly serverAdapter = new LocalQwenProvider();
+
+  getNextStep(request: AIRequest): Promise<AIProviderResult> {
+    return this.serverAdapter.getNextStep(request);
+  }
+}
+
 export class MockAIProvider implements ProviderAdapter {
   readonly name = "Mock AI";
   readonly type = "mock" as const;
@@ -363,5 +374,7 @@ export function createAIProvider(
   profile?: AccountProfile,
   overrides?: { apiKey?: string; timeoutMs?: number },
 ): ProviderAdapter {
+  if (provider.id === "grok" || provider.type === "grok") return new GrokProvider();
+  if (provider.id === "gemini" || provider.type === "gemini") return new GeminiProvider();
   return new LocalQwenProvider();
 }

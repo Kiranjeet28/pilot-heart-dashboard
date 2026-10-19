@@ -83,10 +83,10 @@ export function AiRoutingPanel() {
         <div className="rounded border bg-muted/40 p-3 text-xs space-y-1">
           <p className="font-medium text-foreground">Choose a planner per task</p>
           <p className="text-muted-foreground">
-            Select Local Qwen or Google Gemini in the task configuration. Gemini planning uses the
-            server-side <code className="font-mono text-foreground">GEMINI_API_KEY</code>; the key
-            is never sent to the browser. Both planners use the same action validation and approval
-            rules.
+            Select Local Qwen, Google Gemini, or Grok in the task configuration. Gemini uses the
+            server-side <code className="font-mono text-foreground">GEMINI_API_KEY</code> and Grok
+            uses <code className="font-mono text-foreground">XAI_API_KEY</code>; neither key is sent
+            to the browser. All planners use the same action validation and approval rules.
           </p>
         </div>
 

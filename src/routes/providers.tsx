@@ -62,6 +62,7 @@ function ProvidersPage() {
       options: [
         { value: "openai", label: "OpenAI" },
         { value: "gemini", label: "Google Gemini" },
+        { value: "grok", label: "Grok (xAI)" },
         { value: "anthropic", label: "Anthropic" },
         { value: "custom", label: "Custom" },
       ],

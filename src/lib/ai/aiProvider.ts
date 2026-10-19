@@ -6,6 +6,7 @@ import { jsonrepair } from "jsonrepair";
 import {
   normalizeProviderResponse,
   GeminiProvider,
+  GrokProvider,
   type AIProviderResult,
   type AIRequest,
   type ProviderAdapter,
@@ -879,6 +880,9 @@ export function routedProvider(
 ): ProviderAdapter {
   if (provider.id === "gemini" || provider.type === "gemini") {
     return new GeminiProvider();
+  }
+  if (provider.id === "grok" || provider.type === "grok") {
+    return new GrokProvider();
   }
   return {
     name: "Local Qwen",

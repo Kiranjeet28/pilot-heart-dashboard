@@ -21,6 +21,15 @@ export const DEFAULT_PROVIDERS: Provider[] = [
     connectionStatus: "configured_unverified",
   },
   {
+    id: "grok",
+    displayName: "Grok (xAI)",
+    type: "grok",
+    connectionMethod: "api_key",
+    model: "grok-4.7",
+    enabled: true,
+    connectionStatus: "configured_unverified",
+  },
+  {
     id: "openai",
     displayName: "OpenAI",
     type: "openai",
@@ -63,6 +72,14 @@ export const DEFAULT_PROFILES: AccountProfile[] = [
     providerId: "gemini",
     authMethod: "api_key_ref",
     credentialRef: "GEMINI_API_KEY",
+    notes: "Key is read by the server from the environment and is not stored in browser profile data.",
+  },
+  {
+    id: "grok-server-key",
+    name: "Grok API key (server environment)",
+    providerId: "grok",
+    authMethod: "api_key_ref",
+    credentialRef: "XAI_API_KEY",
     notes: "Key is read by the server from the environment and is not stored in browser profile data.",
   },
 ];

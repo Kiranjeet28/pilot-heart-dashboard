@@ -138,6 +138,20 @@ export function parseGeminiPlanText(text: string): ProviderResult {
   return normalizeProviderResponse(parsed);
 }
 
+/** xAI accepts the shared schema except for the empty allOf array we keep for Gemini compatibility. */
+export function toXaiResponseSchema(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(toXaiResponseSchema);
+  if (schema && typeof schema === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(schema as Record<string, unknown>)) {
+      if (key === "allOf" && Array.isArray(value) && value.length === 0) continue;
+      out[key] = toXaiResponseSchema(value);
+    }
+    return out;
+  }
+  return schema;
+}
+
 /**
  * Strip additionalProperties from JSON schemas if needed.
  */
@@ -238,9 +252,108 @@ async function generateGeminiTaskPlan(input: TaskPlanRequestInput): Promise<Prov
   }
 }
 
+async function generateGrokTaskPlan(input: TaskPlanRequestInput): Promise<ProviderResult> {
+  const key = process.env["XAI_API_KEY"]?.trim();
+  if (!key) {
+    throw Object.assign(new Error("Grok is selected but XAI_API_KEY is not configured on the server."), {
+      code: "missing_credentials",
+      status: 503,
+    });
+  }
+
+  const model = (input.modelOverride?.trim() || process.env["XAI_MODEL"]?.trim() || "grok-4.7");
+  if (!/^grok-[a-zA-Z0-9.-]+$/.test(model)) {
+    throw Object.assign(new Error("The selected Grok model name is invalid."), {
+      code: "invalid_request",
+      status: 400,
+    });
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), input.timeoutMs ?? 300000);
+  try {
+    const response = await fetch("https://api.x.ai/v1/responses", {
+      method: "POST",
+      signal: controller.signal,
+      headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        model,
+        max_output_tokens: 1200,
+        input: [
+          { role: "system", content: LOCAL_SYSTEM },
+          { role: "user", content: buildPrompt(input) },
+        ],
+        text: {
+          format: {
+            type: "json_schema",
+            name: "desktop_task_plan",
+            schema: toXaiResponseSchema(PLAN_JSON_SCHEMA),
+            strict: true,
+          },
+        },
+      }),
+    });
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      const status = response.status === 429 ? 429 : response.status === 401 || response.status === 403 ? 502 : 502;
+      throw Object.assign(new Error(`Grok planning failed (HTTP ${response.status}). ${detail.slice(0, 300)}`), {
+        code: response.status === 429 ? "rate_limit" : response.status === 401 || response.status === 403 ? "auth_failed" : "grok_error",
+        status,
+      });
+    }
+    const data = (await response.json()) as {
+      status?: string;
+      incomplete_details?: { reason?: string } | null;
+      output?: Array<{
+        type?: string;
+        content?: Array<{ type?: string; text?: string; refusal?: string }>;
+      }>;
+    };
+    if (data.status === "incomplete" || data.incomplete_details) {
+      throw Object.assign(new Error("Grok plan reached the output limit; no partial plan was accepted."), {
+        code: "invalid_response",
+        status: 502,
+      });
+    }
+    const output = data.output ?? [];
+    const refusal = output.flatMap((item) => item.content ?? []).find((item) => item.type === "refusal");
+    if (refusal) {
+      throw Object.assign(new Error("Grok declined to produce a desktop plan."), {
+        code: "invalid_response",
+        status: 502,
+      });
+    }
+    const text = output
+      .flatMap((item) => item.content ?? [])
+      .filter((item) => item.type === "output_text")
+      .map((item) => item.text ?? "")
+      .join("");
+    if (!text?.trim()) {
+      throw Object.assign(new Error("Grok returned an empty plan."), { code: "invalid_response", status: 502 });
+    }
+    try {
+      return normalizeProviderResponse(text);
+    } catch (error) {
+      throw Object.assign(new Error(error instanceof Error ? error.message : "Grok returned an invalid plan."), {
+        code: "invalid_response",
+        status: 502,
+      });
+    }
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error) throw error;
+    if (controller.signal.aborted) {
+      throw Object.assign(new Error("Grok planning request timed out."), { code: "timeout", status: 504 });
+    }
+    throw Object.assign(new Error("Could not reach the Grok planning service."), { code: "network_error", status: 502 });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Selects the server-side Gemini route or the local llama-server route. */
 
 export async function generateTaskPlan(input: TaskPlanRequestInput): Promise<ProviderResult> {
+  if (input.providerId === "grok") return generateGrokTaskPlan(input);
   if (input.providerId === "gemini") return generateGeminiTaskPlan(input);
   const rawBase = "http://127.0.0.1:8081";
   const baseUrl = rawBase.replace(/\/+$/, "");

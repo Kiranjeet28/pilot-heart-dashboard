@@ -1,6 +1,6 @@
 // Core domain types for DesktopPilot. Shared by UI, store, and worker boundary.
 
-export type ProviderType = "openai" | "gemini" | "anthropic" | "custom";
+export type ProviderType = "openai" | "gemini" | "grok" | "anthropic" | "custom";
 export type ConnectionMethod = "api_key" | "oauth" | "local_endpoint" | "browser_session";
 /** Never "connected" until a real integration is implemented and verified. */
 export type ProviderConnectionStatus = "not_configured" | "configured_unverified" | "error";

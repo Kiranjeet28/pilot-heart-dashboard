@@ -1,4 +1,4 @@
-import { parseGeminiPlanText, toGeminiResponseSchema } from "@/lib/server/task-plan";
+import { parseGeminiPlanText, toGeminiResponseSchema, toXaiResponseSchema } from "@/lib/server/task-plan";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -314,6 +314,8 @@ describe("secure AI task-plan endpoint", () => {
   const originalToken = process.env["DESKTOPPILOT_SERVER_TOKEN"];
   const originalGatewayKey = process.env["LOVABLE_API_KEY"];
   const originalGeminiKey = process.env["GEMINI_API_KEY"];
+  const originalXaiKey = process.env["XAI_API_KEY"];
+  const originalXaiModel = process.env["XAI_MODEL"];
 
   afterEach(() => {
     if (originalToken === undefined) delete process.env["DESKTOPPILOT_SERVER_TOKEN"];
@@ -324,6 +326,10 @@ describe("secure AI task-plan endpoint", () => {
 
     if (originalGeminiKey === undefined) delete process.env["GEMINI_API_KEY"];
     else process.env["GEMINI_API_KEY"] = originalGeminiKey;
+    if (originalXaiKey === undefined) delete process.env["XAI_API_KEY"];
+    else process.env["XAI_API_KEY"] = originalXaiKey;
+    if (originalXaiModel === undefined) delete process.env["XAI_MODEL"];
+    else process.env["XAI_MODEL"] = originalXaiModel;
 
     vi.unstubAllGlobals();
   });
@@ -401,6 +407,45 @@ describe("secure AI task-plan endpoint", () => {
     expect(json.ok).toBe(true);
   });
 
+  it("routes Grok plans through xAI with the server-side key and strict shared schema", async () => {
+    process.env["XAI_API_KEY"] = "test-xai-key";
+    process.env["XAI_MODEL"] = "grok-4.7";
+    const plan = {
+      plan: ["Inspect the desktop"],
+      summary: "Inspect the desktop",
+      steps: [
+        {
+          action: { kind: "read_screen", targetId: "desktop", description: "Inspect screen" },
+          requiresApproval: false,
+        },
+      ],
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("https://api.x.ai/v1/responses");
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer test-xai-key");
+      const payload = JSON.parse(String(init?.body));
+      expect(payload.model).toBe("grok-4.7");
+      expect(payload.text.format.strict).toBe(true);
+      expect(JSON.stringify(payload.text.format.schema)).not.toContain('"allOf":[]');
+      return Response.json({
+        status: "completed",
+        output: [{
+          type: "message",
+          content: [{ type: "output_text", text: JSON.stringify(plan) }],
+        }],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await postPlan(
+      { providerId: "grok", modelOverride: "grok-4.7", userRequest: "Inspect the desktop" },
+      { origin: "http://localhost:3000" },
+    );
+    expect(response.status).toBe(200);
+    expect((await response.json()).summary).toBe("Inspect the desktop");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("returns 502 with clear local server error when llama-server is unreachable", async () => {
     vi.stubGlobal(
       "fetch",
@@ -421,7 +466,7 @@ describe("secure AI task-plan endpoint", () => {
   it("does not expose browser secrets in frontend source", () => {
     const providerSource = readFileSync(resolve("src/lib/ai/provider.ts"), "utf8");
     expect(providerSource).not.toMatch(
-      /VITE_GEMINI_API_KEY|desktoppilot_server_token|import\.meta\.env|sessionStorage/i,
+      /VITE_(GEMINI|XAI)_API_KEY|desktoppilot_server_token|import\.meta\.env|sessionStorage/i,
     );
   });
 
@@ -555,5 +600,17 @@ describe("Gemini direct schema", () => {
     });
     expect(JSON.stringify(out)).not.toContain("additionalProperties");
     expect(JSON.stringify(out)).not.toContain("allOf");
+  });
+});
+
+describe("xAI direct schema", () => {
+  it("removes empty allOf values but preserves other schema rules", () => {
+    const schema = toXaiResponseSchema({
+      type: "object",
+      allOf: [],
+      properties: { action: { type: "string", enum: ["read_screen"] } },
+    });
+    expect(JSON.stringify(schema)).not.toContain("allOf");
+    expect(JSON.stringify(schema)).toContain("read_screen");
   });
 });
