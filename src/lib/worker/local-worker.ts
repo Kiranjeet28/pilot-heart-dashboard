@@ -335,6 +335,8 @@ export class LocalHttpWorker implements DesktopWorker {
 
 export function toWorkerPayload(a: ActionRequest): Record<string, unknown> | null {
   switch (a.kind) {
+    case "launch_app":
+      return a.app === "notepad" ? { kind: "launch_app", app: "notepad" } : null;
     case "click":
       return { kind: "click", x: a.x, y: a.y, observation_id: a.observationId };
     case "type_text":

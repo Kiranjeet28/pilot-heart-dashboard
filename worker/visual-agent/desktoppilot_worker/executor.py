@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import io
 import secrets
+import subprocess
 import time
 from typing import Callable, Optional
 
@@ -40,6 +41,10 @@ class PyAutoGuiExecutor:
 
     def click(self, x: int, y: int) -> None:
         self.pg.click(x=x, y=y, button="left")
+
+    def launch_notepad(self) -> None:
+        # Fixed executable and argument list: no model supplied process or command text.
+        subprocess.Popen(["notepad.exe"], shell=False)
 
     def type_text(self, text: str, should_stop: Callable[[], bool]) -> None:
         for ch in text:

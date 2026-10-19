@@ -99,10 +99,21 @@ export function CurrentTask({ task }: { task?: Task | undefined }) {
             {real ? "This will act on your real Windows desktop." : "This would be simulated only."}
           </p>
           <div className="mt-2 flex gap-2">
-            <Button size="sm" onClick={() => actions.approve(task.id)}>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => {
+                const result = actions.approve(task.id);
+                if (!result.ok) {
+                  toast.error(result.message);
+                  return;
+                }
+                toast.success("Plan approved. Starting the task.");
+              }}
+            >
               <Check className="h-4 w-4" /> Approve
             </Button>
-            <Button size="sm" variant="outline" onClick={() => actions.reject(task.id)}>
+            <Button type="button" size="sm" variant="outline" onClick={() => actions.reject(task.id)}>
               <X className="h-4 w-4" /> Reject
             </Button>
           </div>

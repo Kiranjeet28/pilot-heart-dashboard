@@ -174,7 +174,7 @@ def create_app(config: WorkerConfig, authority: TokenAuthority, pairing: Pairing
     async def capabilities(request: Request):
         require_auth(request)
         return {
-            "actions": ["observe", "click", "type_text", "key_press", "copy_selection", "paste", "wait", "stop"],
+            "actions": ["observe", "launch_app", "click", "type_text", "key_press", "copy_selection", "paste", "wait", "stop"],
             "keys": sorted(ALLOWED_KEYS),
             "limits": {
                 "max_text": MAX_TEXT,

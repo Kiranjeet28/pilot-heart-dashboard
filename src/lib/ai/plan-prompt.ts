@@ -9,23 +9,19 @@ export interface PlanPromptInput {
 
 /**
  * Static planning rules live here (not in the per-request user prompt) so llama.cpp
- * `cache_prompt` can reuse a stable prefix. Semantic constraints that the JSON schema
- * grammar cannot enforce â€” safety, target pinning, verification usage â€” stay explicit.
+ * `cache_prompt` can reuse a stable prefix. Keep this short: prompt eval on CPU is costly.
  */
 export const LOCAL_SYSTEM =
-  "You are DesktopPilot's local task planner. Return JSON only, matching the exact schema. Max 12 steps total across batches; emit at most 3 actions per planning response batch. Return only the next small batch of actions needed, not the entire task plan. Each batch must remain consistent with the current objective and the latest available desktop observation. Keep descriptions concise. " +
-  "REAL DESKTOP MODE RULES: Never generate focus_window in Real Desktop mode. " +
-  "Use only action kinds explicitly supported by the real desktop worker's action schema. Never invent or use unsupported worker actions. " +
-  "Use read_screen to inspect the current desktop before deciding how to interact. " +
-  "A click action MUST include x and y as non-negative integers. Use click only when both coordinates are explicitly available from a fresh screen observation in the supplied context. Never guess, infer, reuse stale, or fabricate coordinates. " +
-  "If valid fresh coordinates are unavailable, do not emit click. Use read_screen again, or use supported keyboard actions such as key_press with Tab, Shift+Tab, Enter, Escape, or an appropriate shortcut. Use type_text, paste, copy_selection, and wait only when supported and appropriate. " +
-  "Every key_press action MUST include a non-empty keys string. Use only keyboard keys or shortcuts supported by the existing worker allowlist. Never generate key_press without keys. Do not invent unsupported shortcuts. " +
-  "Never use focus_window, even as a fallback, in Real Desktop mode. Do not substitute unsupported action names for prohibited actions. " +
-  "For verification, use only verification methods supported by the actual worker schema, such as worker_ok or screen_capture when available. Use text_match only when expectedText is provided. Use clipboard verification only after copy_selection has been performed and clipboard data is available. Never invent verification types or fields. " +
-  "Every step must include action, requiresApproval, and verification, using the exact required schema fields and types: {\"plan\": [\"...\"], \"summary\": \"...\", \"steps\": [{\"action\": {\"kind\": \"...\", \"targetId\": \"...\", \"description\": \"...\"}, \"requiresApproval\": false, \"verification\": {\"kind\": \"worker_ok\"}}]}. " +
-  "Keep the plan, summary, and descriptions brief. Return valid JSON only: no Markdown, code fences, comments, or explanatory text. If the objective is complete, include '[complete]' in the summary.";
+  "You are DesktopPilot's local task planner. Return JSON only, matching the exact schema. Max 12 steps total across batches; emit at most 3 actions per planning response batch. Return only the next small batch, not the entire remaining plan. Keep plan, summary, and descriptions brief. " +
+  "REAL DESKTOP MODE RULES: Never generate focus_window in Real Desktop mode. Never use focus_window, even as a fallback. " +
+  "Allowed action kinds: launch_app, read_screen, click, type_text, key_press, wait, copy_selection, paste. launch_app supports only app=notepad. Never invent unsupported worker actions. " +
+  "A click action MUST include x and y as non-negative integers grounded in a fresh screenshot supplied in the current prompt. Never guess coordinates. If no screenshot is supplied, do not click; use a suitable approved action or return no steps with a clear summary. " +
+  "Every key_press action MUST include a non-empty keys string from the worker allowlist. " +
+  "Verification kinds: worker_ok, screen_capture, text_match (only with expectedText), clipboard (only after copy_selection). " +
+  "Required JSON fields: top-level plan, summary, steps; each step action, requiresApproval; each action kind, targetId, description. Optional verification {kind}. " +
+  "If the objective is complete after this batch, include '[complete]' in the summary. No Markdown, code fences, or extra text.";
 
-/** Strict JSON schema the model must emit. */
+/** Strict JSON schema the model must emit. Avoid anyOf — llama.cpp GBNF mishandles it. */
 export const PLAN_JSON_SCHEMA = {
   type: "object",
   additionalProperties: false,
@@ -35,7 +31,7 @@ export const PLAN_JSON_SCHEMA = {
     summary: { type: "string" },
     steps: {
       type: "array",
-      maxItems: 12,
+      maxItems: 3,
       items: {
         type: "object",
         additionalProperties: false,
@@ -49,6 +45,7 @@ export const PLAN_JSON_SCHEMA = {
               kind: {
                 type: "string",
                 enum: [
+                  "launch_app",
                   "read_screen",
                   "click",
                   "type_text",
@@ -60,6 +57,7 @@ export const PLAN_JSON_SCHEMA = {
               },
               targetId: { type: "string" },
               description: { type: "string" },
+              app: { type: "string", enum: ["notepad"] },
               text: { type: "string" },
               x: { type: "integer", minimum: 0 },
               y: { type: "integer", minimum: 0 },
@@ -67,26 +65,10 @@ export const PLAN_JSON_SCHEMA = {
               durationMs: { type: "integer" },
               observationId: { type: "string" },
             },
-            anyOf: [
+            allOf: [
               {
-                properties: {
-                  kind: {
-                    enum: [
-                      "read_screen",
-                      "click",
-                      "type_text",
-                      "wait",
-                      "copy_selection",
-                      "paste",
-                    ],
-                  },
-                },
-              },
-              {
-                properties: {
-                  kind: { enum: ["key_press"] },
-                },
-                required: ["keys"],
+                if: { properties: { kind: { const: "click" } }, required: ["kind"] },
+                then: { required: ["x", "y", "observationId"] },
               },
             ],
           },
@@ -134,7 +116,6 @@ export function buildPlanPrompt(input: PlanPromptInput): string {
   const contextBlock = contextLines.length
     ? `\nContext:\n${contextLines.map((item) => `- ${item}`).join("\n")}`
     : "";
-
   return [
     `Selected target: "${targetId}". Every action's targetId MUST be exactly "${targetId}".`,
     `Task: ${safeRequest}${contextBlock}`,

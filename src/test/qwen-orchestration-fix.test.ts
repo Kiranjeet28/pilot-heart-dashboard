@@ -100,6 +100,46 @@ describe("DesktopPilot — Qwen Invalid Plans and Orchestration Fixes (13 Requir
     expect(result.batchesExecuted).toBe(1);
   });
 
+  it("uses one short planner request for a valid simple task", async () => {
+    const validPlan = {
+      summary: "[complete] Open the requested application",
+      plan: ["Open the application"],
+      steps: [
+        {
+          action: {
+            kind: "key_press",
+            targetId: "desktop",
+            description: "Open Run",
+            keys: "win+r",
+          },
+          requiresApproval: false,
+        },
+      ],
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        if (init?.body) bodies.push(JSON.parse(String(init.body)));
+        return sse([JSON.stringify(validPlan)]);
+      }),
+    );
+
+    const result = await callLocal({
+      taskId: "simple-one-request",
+      userRequest: "open notepad",
+      targetId: "desktop",
+      provider: DEFAULT_PROVIDERS[0]!,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]?.["max_tokens"]).toBe(256);
+    const format = bodies[0]?.["response_format"] as {
+      json_schema: { schema: { properties: { steps: { maxItems: number } } } };
+    };
+    expect(format.json_schema.schema.properties.steps.maxItems).toBe(3);
+  });
+
   // Test 2: A valid plan with one action executes that action without requiring three actions
   it("2. valid plan with one action executes that action without requiring three actions", async () => {
     let executedCount = 0;
@@ -153,11 +193,22 @@ describe("DesktopPilot — Qwen Invalid Plans and Orchestration Fixes (13 Requir
           requiresApproval: false,
         },
         {
-          action: { kind: "click", targetId: "notepad", x: 100, y: 100, description: "Step 2: Click" },
+          action: {
+            kind: "click",
+            targetId: "notepad",
+            x: 100,
+            y: 100,
+            description: "Step 2: Click",
+          },
           requiresApproval: false,
         },
         {
-          action: { kind: "type_text", targetId: "notepad", text: "abc", description: "Step 3: Type" },
+          action: {
+            kind: "type_text",
+            targetId: "notepad",
+            text: "abc",
+            description: "Step 3: Type",
+          },
           requiresApproval: false,
         },
       ],
@@ -249,7 +300,7 @@ describe("DesktopPilot — Qwen Invalid Plans and Orchestration Fixes (13 Requir
     });
 
     expect(() => normalizeProviderResponse(invalidJsonMissingFields)).toThrowError(
-      /steps\.0\.action\.targetId: Required; steps\.0\.action\.description: Required/,
+      /steps\.0\.action\.targetId: Required \(received undefined\); steps\.0\.action\.description: Required \(received undefined\)/,
     );
   });
 
@@ -293,7 +344,10 @@ describe("DesktopPilot — Qwen Invalid Plans and Orchestration Fixes (13 Requir
     expect(requestCount).toBe(2);
     // Bounded retry sent correction reminder
     const retryMessages = bodies[1]?.["messages"] as Array<{ content: string }>;
-    expect(retryMessages?.at(-1)?.content).toBe("Return only valid JSON matching the schema.");
+    expect(retryMessages?.at(-1)?.content).toContain(
+      "Return only valid JSON matching the schema. The previous response failed validation:",
+    );
+    expect(retryMessages?.at(-1)?.content).toContain("steps: Expected array");
   });
 
   // Test 7: A permanently invalid response stops safely without executing actions
@@ -303,7 +357,7 @@ describe("DesktopPilot — Qwen Invalid Plans and Orchestration Fixes (13 Requir
       "fetch",
       vi.fn().mockImplementation(async () => {
         requestCount++;
-        return sse(['{"summary": "incomplete without steps"}']);
+        return sse(['{"summary": "incomplete", "steps": "not-an-array"}']);
       }),
     );
 
@@ -380,7 +434,9 @@ describe("DesktopPilot — Qwen Invalid Plans and Orchestration Fixes (13 Requir
         planBatch: async (input) => {
           callOrder.push("plan");
           if (callOrder.filter((c) => c === "plan").length === 2) {
-            batch2ReceivedObservation = input.context?.find((c) => c.startsWith("Latest observation:"));
+            batch2ReceivedObservation = input.context?.find((c) =>
+              c.startsWith("Latest observation:"),
+            );
             return {
               ok: true,
               summary: "Task complete now",
@@ -433,8 +489,8 @@ describe("DesktopPilot — Qwen Invalid Plans and Orchestration Fixes (13 Requir
       {
         description: "Open notepad unique test",
         providerId: DEFAULT_PROVIDERS[0]!.id,
-        profileId: "default",
-        targetId: "notepad",
+        profileId: "personal",
+        targetId: "vscode",
       },
       false,
     );
@@ -443,10 +499,10 @@ describe("DesktopPilot — Qwen Invalid Plans and Orchestration Fixes (13 Requir
     if (!createResult.ok) return;
 
     const taskId = createResult.id;
-    // Calling start multiple times rapidly should only start once
-    actions.start(taskId);
-    actions.start(taskId);
-    actions.start(taskId);
+    // Starting once succeeds; subsequent start attempts are rejected as already active.
+    expect(actions.start(taskId)).toEqual([]);
+    expect(actions.start(taskId)).toContain("Task is already active");
+    expect(actions.start(taskId)).toContain("Task is already active");
 
     const task = store.get().tasks.find((t) => t.id === taskId);
     expect(task).toBeDefined();
@@ -501,14 +557,19 @@ describe("DesktopPilot — Qwen Invalid Plans and Orchestration Fixes (13 Requir
       plan: ["Identical action"],
       steps: [
         {
-          action: { kind: "wait", targetId: "notepad", description: "Duplicate wait" },
+          action: {
+            kind: "type_text",
+            targetId: "notepad",
+            text: "same",
+            description: "Duplicate text",
+          },
           requiresApproval: false,
         },
       ],
     };
 
     const result = await orchestrateTaskBatches(
-      { userRequest: "Loop test" },
+      { userRequest: "Repeat this action, then continue with the remaining multi-step workflow" },
       {
         planBatch: async () => duplicatePlan,
         validateAction: () => ({ ok: true }),

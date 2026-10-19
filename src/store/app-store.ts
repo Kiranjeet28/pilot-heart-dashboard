@@ -419,8 +419,21 @@ async function tick(id: string) {
   try {
     if (t.deadlineAt && Date.now() >= t.deadlineAt) return fail(id, "Task execution timed out");
     if (t.status === "queued") {
-      const h = await w.healthCheck();
+      let h = await w.healthCheck();
       if (getTask(id)?.status !== "queued") return;
+      // Allow one short startup race when the separately launched local worker
+      // has just begun listening. This never starts the worker or polls forever.
+      if (
+        !h.ok &&
+        w.mode === "live" &&
+        h.latencyMs < 1_000 &&
+        h.message.includes("Could not reach the worker at")
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        if (getTask(id)?.status !== "queued") return;
+        h = await w.healthCheck();
+        if (getTask(id)?.status !== "queued") return;
+      }
       if (!h.ok)
         return fail(
           id,
@@ -518,7 +531,15 @@ async function tick(id: string) {
                 });
           },
           validateAction: (action) => {
-            const v = validateAction(action as ActionRequest, { strict: !sim, screen: state.connection.screen });
+            const act = action as ActionRequest;
+            if (!sim && act.kind === "click") {
+              return { ok: false, reason: "Local Qwen has no visual grounding; refusing coordinate clicks. Use a fresh guided screenshot target." };
+            }
+            const latest = getTask(id)?.lastObservation;
+            const screen = latest?.width && latest.height
+              ? { width: latest.width, height: latest.height }
+              : state.connection.screen;
+            const v = validateAction(act, { strict: !sim, screen });
             return v.ok ? { ok: true } : { ok: false, reason: v.reason };
           },
           onBatchStart: (batchIndex, result) => {
@@ -910,17 +931,38 @@ export const actions = {
     log(id, "warning", reason, false);
   },
 
-  approve(id: string) {
+  approve(id: string): { ok: true } | { ok: false; message: string } {
     const t = getTask(id);
-    if (!t || t.status !== "waiting_for_approval") return;
+    if (!t) return { ok: false, message: "Task not found." };
+    if (t.status !== "waiting_for_approval") {
+      return { ok: false, message: `This task is ${t.status.replaceAll("_", " ")}, not waiting for approval.` };
+    }
+    if (state.emergencyStop) {
+      return { ok: false, message: "Emergency Stop is engaged. Reset it before approving this task." };
+    }
+    if (isReal() && state.connection.state !== "connected") {
+      return {
+        ok: false,
+        message: `Real worker is not connected: ${state.connection.message || state.connection.state}. Reconnect it, then approve again.`,
+      };
+    }
+    if (!isReal() && state.settings.workerSimulation === "disconnected") {
+      return { ok: false, message: "Demo worker is disconnected. Reconnect it, then approve again." };
+    }
+    if (!canTransition(t.status, "running")) {
+      return { ok: false, message: "Task cannot transition to running from its current state." };
+    }
     if (isReal()) set({ realActionsConfirmed: true });
     patchTask(id, {
       planApproved: true,
       steps: t.steps.map((s) => ({ ...s, approved: true })),
     });
-    transition(id, "running");
+    if (!transition(id, "running")) {
+      return { ok: false, message: "Task state changed before approval could be applied. Please try again." };
+    }
     log(id, "approval", "Plan approved by user — task will run without further prompts", false);
     schedule(id, 300);
+    return { ok: true };
   },
 
   reject(id: string) {

@@ -213,7 +213,9 @@ describe("6. validation", () => {
     expect(r.ok).toBe(false);
     expect(bodies.length).toBe(2);
     const last = bodies[1]!["messages"] as Array<{ content: string }>;
-    expect(last.at(-1)!.content).toBe("Return only valid JSON matching the schema.");
+    expect(last.at(-1)!.content).toContain(
+      "Return only valid JSON matching the schema. The previous response failed validation:",
+    );
   });
 });
 
@@ -354,8 +356,8 @@ describe("10. planning prompt token reductions", () => {
     expect(bodies.length).toBe(2);
   });
 
-  it("keeps PLAN_JSON_SCHEMA fields required by execution unchanged", () => {
+  it("keeps required fields and limits each batch to three actions", () => {
     expect(PLAN_JSON_SCHEMA.required).toEqual(["plan", "summary", "steps"]);
-    expect(PLAN_JSON_SCHEMA.properties.steps.maxItems).toBe(12);
+    expect(PLAN_JSON_SCHEMA.properties.steps.maxItems).toBe(3);
   });
 });

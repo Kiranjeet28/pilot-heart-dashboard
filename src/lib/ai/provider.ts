@@ -53,6 +53,7 @@ export interface ProviderAdapter {
 const actionSchema = z
   .object({
     kind: z.enum([
+      "launch_app",
       "read_screen",
       "click",
       "type_text",
@@ -63,6 +64,7 @@ const actionSchema = z
     ]),
     targetId: z.string().min(1),
     description: z.string().min(1).max(600),
+    app: z.enum(["notepad"]).optional(),
     text: z.string().max(5000).optional(),
     x: z.number().int().min(0).max(60000).optional(),
     y: z.number().int().min(0).max(60000).optional(),
@@ -84,11 +86,15 @@ const actionSchema = z
         message: "key_press requires keys",
       });
     }
+    if (action.kind === "launch_app" && !action.app) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "launch_app requires an approved app" });
+    }
   })
   .transform(({ requiresApproval: _requiresApproval, ...action }): ActionRequest => ({
     kind: action.kind,
     targetId: action.targetId,
     description: action.description,
+    ...(action.app !== undefined ? { app: action.app } : {}),
     ...(action.text !== undefined ? { text: action.text } : {}),
     ...(action.x !== undefined ? { x: action.x } : {}),
     ...(action.y !== undefined ? { y: action.y } : {}),
@@ -100,8 +106,14 @@ const actionSchema = z
 export function formatZodError(error: z.ZodError): string {
   return error.issues
     .map((issue) => {
-      const path = issue.path.join(".");
-      return path ? `${path}: ${issue.message}` : issue.message;
+      const path = issue.path.length ? issue.path.map(String).join(".") : "(root)";
+      const received =
+        "received" in issue &&
+        issue.received !== undefined &&
+        !issue.message.toLowerCase().includes("received")
+          ? ` (received ${String(issue.received)})`
+          : "";
+      return `${path}: ${issue.message}${received}`;
     })
     .join("; ");
 }
@@ -135,7 +147,10 @@ export function normalizeProviderResponse(data: unknown): ProviderResult {
   if (typeof data === "string") {
     let text = data.trim();
     if (text.startsWith("```")) {
-      text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+      text = text
+        .replace(/^```(?:json)?\s*/i, "")
+        .replace(/\s*```$/, "")
+        .trim();
     }
     const match = text.match(/\{[\s\S]*\}/);
     parsed = JSON.parse(match ? match[0] : text);

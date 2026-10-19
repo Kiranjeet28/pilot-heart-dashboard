@@ -55,6 +55,7 @@ export type TaskStatus =
   | "cancelled";
 
 export type ActionKind =
+  | "launch_app"
   | "focus_window"
   | "read_screen"
   | "click"
@@ -68,6 +69,7 @@ export interface ActionRequest {
   kind: ActionKind;
   targetId: string;
   description: string;
+  app?: "notepad";
   text?: string;
   x?: number;
   y?: number;

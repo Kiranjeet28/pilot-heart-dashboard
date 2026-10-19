@@ -41,6 +41,11 @@ class ClickAction(_Strict):
     observation_id: str = Field(min_length=8, max_length=64)
 
 
+class LaunchAppAction(_Strict):
+    kind: Literal["launch_app"]
+    app: Literal["notepad"]
+
+
 class TypeTextAction(_Strict):
     kind: Literal["type_text"]
     text: str = Field(min_length=1, max_length=MAX_TEXT)
@@ -80,7 +85,7 @@ class WaitAction(_Strict):
 
 
 Action = Annotated[
-    Union[ClickAction, TypeTextAction, KeyPressAction, CopySelectionAction, PasteAction, WaitAction],
+    Union[LaunchAppAction, ClickAction, TypeTextAction, KeyPressAction, CopySelectionAction, PasteAction, WaitAction],
     Field(discriminator="kind"),
 ]
 
@@ -96,6 +101,7 @@ class ActionInterrupted(Exception):
 
 
 class Executor(Protocol):
+    def launch_notepad(self) -> None: ...
     def screen_size(self) -> tuple[int, int]: ...
     def screenshot(self) -> tuple[bytes, int, int, int, int]: ...  # jpeg, screen w/h, image w/h
     def click(self, x: int, y: int) -> None: ...
@@ -109,6 +115,9 @@ class Executor(Protocol):
 def run_action(ex: Executor, a, should_stop: Callable[[], bool]) -> dict:
     if should_stop():
         raise ActionInterrupted()
+    if a.kind == "launch_app":
+        ex.launch_notepad()
+        return {"message": "Launched approved Notepad application"}
     if a.kind == "click":
         ex.click(a.x, a.y)
         return {"message": f"Clicked at ({a.x}, {a.y})"}

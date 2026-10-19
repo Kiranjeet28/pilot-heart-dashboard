@@ -5,6 +5,7 @@ import { ALLOWED_KEYS, MAX_ACTION_TEXT, MAX_WAIT_MS } from "./key-allowlist";
 export type ValidatedActionRequest = ActionRequest & { readonly __validated: true };
 
 const ALLOWED: readonly ActionKind[] = [
+  "launch_app",
   "focus_window",
   "read_screen",
   "click",
@@ -32,6 +33,8 @@ export function validateAction(a: ActionRequest, ctx: ValidationContext = {}): V
   if (!ALLOWED.includes(a.kind))
     return { ok: false, reason: `Action "${String(a.kind)}" is not allowed` };
   if (!a.targetId) return { ok: false, reason: "Action has no desktop target" };
+  if (a.kind === "launch_app" && a.app !== "notepad")
+    return { ok: false, reason: "launch_app supports only the approved notepad application" };
   const textLimit = ctx.strict ? MAX_ACTION_TEXT : MAX_TEXT;
   if (a.kind === "type_text") {
     if (!a.text) return { ok: false, reason: "type_text requires text" };

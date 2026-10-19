@@ -8,12 +8,16 @@ import {
 
 import {
   PLAN_CHUNK_MAX_OUTPUT_TOKENS,
+  PLAN_MALFORMED_REPAIR_LIMIT,
+  PLAN_SIMPLE_MAX_OUTPUT_TOKENS,
   TASK_DECOMPOSITION_SCHEMA,
   buildDecompositionPrompt,
   getReadyChunks,
   mergeChunkPlans,
   validateTaskDecomposition,
 } from "@/lib/server/task-plan-orchestrator";
+import { logInferenceTiming, type InferencePurpose } from "@/lib/ai/inference-log";
+import { isSimpleDesktopTask } from "@/lib/tasks/simple-task";
 
 export interface TaskPlanRequestInput {
   taskId?: string | undefined;
@@ -34,7 +38,7 @@ const taskPlanRequestSchema = z.object({
   profileId: z.string().min(1).max(128).optional(),
   context: z.array(z.string().min(1).max(500)).max(12).optional().default([]),
   modelOverride: z.string().min(1).max(128).optional(),
-  timeoutMs: z.number().int().min(1000).max(120000).optional().default(60000),
+  timeoutMs: z.number().int().min(1000).max(600000).optional().default(300000),
 });
 
 function getServerToken(): string | null {
@@ -138,9 +142,7 @@ export function toGeminiResponseSchema(schema: unknown): unknown {
  * Never calls Gemini or Lovable AI Gateway.
  */
 
-export async function generateTaskPlan(
-  input: TaskPlanRequestInput,
-): Promise<ProviderResult> {
+export async function generateTaskPlan(input: TaskPlanRequestInput): Promise<ProviderResult> {
   const rawBase = "http://127.0.0.1:8081";
   const baseUrl = rawBase.replace(/\/+$/, "");
   const endpoint = baseUrl.endsWith("/v1")
@@ -148,7 +150,7 @@ export async function generateTaskPlan(
     : `${baseUrl}/v1/chat/completions`;
 
   const model = "qwen";
-  const timeoutMs = input.timeoutMs ?? 60000;
+  const timeoutMs = input.timeoutMs ?? 300000;
 
   type LocalResponse = {
     choices?: Array<{
@@ -156,9 +158,19 @@ export async function generateTaskPlan(
         content?: string | Array<{ text?: string }>;
       };
     }>;
+    usage?: {
+      prompt_tokens?: number;
+      completion_tokens?: number;
+    };
+    timings?: {
+      prompt_n?: number;
+      predicted_n?: number;
+      prompt_ms?: number;
+    };
   };
 
   async function requestJson(
+    purpose: InferencePurpose,
     schemaName: string,
     schema: unknown,
     system: string,
@@ -167,6 +179,9 @@ export async function generateTaskPlan(
   ): Promise<unknown> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const started = Date.now();
+    let promptTokens: number | undefined;
+    let generatedTokens: number | undefined;
 
     try {
       const response = await fetch(endpoint, {
@@ -175,6 +190,7 @@ export async function generateTaskPlan(
         body: JSON.stringify({
           model,
           stream: false,
+          cache_prompt: true,
           temperature: 0.2,
           max_tokens: maxTokens,
           chat_template_kwargs: { enable_thinking: false },
@@ -196,15 +212,21 @@ export async function generateTaskPlan(
 
       if (!response.ok) {
         const details = await response.text().catch(() => "");
+        logInferenceTiming({
+          purpose,
+          durationMs: Date.now() - started,
+          valid: false,
+          validationError: `HTTP ${response.status}`,
+        });
         throw Object.assign(
-          new Error(
-            `Local Qwen server returned HTTP ${response.status}. ${details.slice(0, 300)}`,
-          ),
+          new Error(`Local Qwen server returned HTTP ${response.status}. ${details.slice(0, 300)}`),
           { code: "local_model_error", status: 502 },
         );
       }
 
       const data = (await response.json()) as LocalResponse;
+      promptTokens = data.usage?.prompt_tokens ?? data.timings?.prompt_n;
+      generatedTokens = data.usage?.completion_tokens ?? data.timings?.predicted_n;
       const content = data.choices?.[0]?.message?.content;
       const rawText =
         typeof content === "string"
@@ -214,19 +236,43 @@ export async function generateTaskPlan(
             : "";
 
       if (!rawText.trim()) {
-        throw Object.assign(
-          new Error("Local Qwen returned an empty response."),
-          { code: "invalid_response", status: 502 },
-        );
+        logInferenceTiming({
+          purpose,
+          durationMs: Date.now() - started,
+          promptTokens,
+          generatedTokens,
+          valid: false,
+          validationError: "empty response",
+        });
+        throw Object.assign(new Error("Local Qwen returned an empty response."), {
+          code: "invalid_response",
+          status: 502,
+        });
       }
 
       try {
-        return JSON.parse(extractJsonObject(rawText));
+        const parsed = JSON.parse(extractJsonObject(rawText));
+        logInferenceTiming({
+          purpose,
+          durationMs: Date.now() - started,
+          promptTokens,
+          generatedTokens,
+          valid: true,
+        });
+        return parsed;
       } catch {
-        throw Object.assign(
-          new Error("Local Qwen did not return valid JSON."),
-          { code: "invalid_response", status: 502 },
-        );
+        logInferenceTiming({
+          purpose,
+          durationMs: Date.now() - started,
+          promptTokens,
+          generatedTokens,
+          valid: false,
+          validationError: "invalid JSON",
+        });
+        throw Object.assign(new Error("Local Qwen did not return valid JSON."), {
+          code: "invalid_response",
+          status: 502,
+        });
       }
     } catch (error) {
       if (error && typeof error === "object" && "code" in error) {
@@ -234,12 +280,26 @@ export async function generateTaskPlan(
       }
 
       if (controller.signal.aborted) {
-        throw Object.assign(
-          new Error("Local Qwen planning request timed out."),
-          { code: "timeout", status: 504 },
-        );
+        logInferenceTiming({
+          purpose,
+          durationMs: Date.now() - started,
+          promptTokens,
+          generatedTokens,
+          valid: false,
+          validationError: "timeout",
+        });
+        throw Object.assign(new Error("Local Qwen planning request timed out."), {
+          code: "timeout",
+          status: 504,
+        });
       }
 
+      logInferenceTiming({
+        purpose,
+        durationMs: Date.now() - started,
+        valid: false,
+        validationError: "unreachable",
+      });
       throw Object.assign(
         new Error(
           `Cannot reach local Qwen at ${endpoint}. Check that llama-server is running on port 8081.`,
@@ -251,8 +311,67 @@ export async function generateTaskPlan(
     }
   }
 
-  // First, split the request into a validated dependency graph.
+  async function planDirect(planInput: TaskPlanRequestInput): Promise<ProviderResult> {
+    const maxTokens = isSimpleDesktopTask(planInput.userRequest)
+      ? PLAN_SIMPLE_MAX_OUTPUT_TOKENS
+      : PLAN_CHUNK_MAX_OUTPUT_TOKENS;
+    const prompt = buildPrompt(planInput);
+    let rawPlan = await requestJson(
+      "planning",
+      "task_plan",
+      PLAN_JSON_SCHEMA,
+      LOCAL_SYSTEM,
+      prompt,
+      maxTokens,
+    );
+
+    try {
+      return normalizeProviderResponse(rawPlan);
+    } catch (firstError) {
+      const details = firstError instanceof Error ? firstError.message : "invalid plan";
+      logInferenceTiming({
+        purpose: "planning",
+        durationMs: 0,
+        valid: false,
+        validationError: details,
+      });
+      if (PLAN_MALFORMED_REPAIR_LIMIT < 1 || /click requires x and y|do not guess coordinates/i.test(details)) {
+        throw Object.assign(new Error(details), { code: "invalid_response", status: 502 });
+      }
+      rawPlan = await requestJson(
+        "repair",
+        "task_plan",
+        PLAN_JSON_SCHEMA,
+        LOCAL_SYSTEM,
+        `${prompt}\nRepair the previous JSON. Field errors: ${details}`,
+        maxTokens,
+      );
+      try {
+        return normalizeProviderResponse(rawPlan);
+      } catch (secondError) {
+        const message = secondError instanceof Error ? secondError.message : details;
+        logInferenceTiming({
+          purpose: "repair",
+          durationMs: 0,
+          valid: false,
+          validationError: message,
+        });
+        throw Object.assign(new Error(message), {
+          code: "invalid_response",
+          status: 502,
+        });
+      }
+    }
+  }
+
+  // Simple tasks: one planner request. Orchestration batches handle any follow-up.
+  if (isSimpleDesktopTask(input.userRequest)) {
+    return planDirect(input);
+  }
+
+  // First, split a complex request into a validated dependency graph.
   const decompositionRaw = await requestJson(
+    "decomposition",
     "task_decomposition",
     TASK_DECOMPOSITION_SCHEMA,
     [
@@ -264,7 +383,7 @@ export async function generateTaskPlan(
       "Do not execute actions or invent screen coordinates.",
     ].join(" "),
     buildDecompositionPrompt(input),
-    1200,
+    400,
   );
 
   let decomposition;
@@ -288,80 +407,45 @@ export async function generateTaskPlan(
     result: ProviderResult;
   }> = [];
 
-  // Run independent chunks concurrently; dependent chunks wait for their
-  // dependencies to finish planning.
+  // llama-server handles one request at a time — plan ready chunks sequentially.
   while (completedIds.size < decomposition.chunks.length) {
-    const readyChunks = getReadyChunks(
-      decomposition.chunks,
-      completedIds,
-      new Set<string>(),
-    );
+    const readyChunks = getReadyChunks(decomposition.chunks, completedIds, new Set<string>());
 
     if (readyChunks.length === 0) {
-      throw Object.assign(
-        new Error("No runnable chunks remain in the task dependency graph."),
-        { code: "invalid_response", status: 502 },
-      );
+      throw Object.assign(new Error("No runnable chunks remain in the task dependency graph."), {
+        code: "invalid_response",
+        status: 502,
+      });
     }
 
-    const batch = await Promise.all(
-      readyChunks.map(async (chunk) => {
-        const dependencyContext = chunk.dependsOn.map((dependencyId) => {
-          const dependencyResult = resultsById.get(dependencyId);
+    for (const chunk of readyChunks) {
+      const dependencyContext = chunk.dependsOn.map((dependencyId) => {
+        const dependencyResult = resultsById.get(dependencyId);
 
-          if (!dependencyResult) {
-            throw new Error(
-              `Missing completed planning dependency: ${dependencyId}`,
-            );
-          }
-
-          return [
-            `Completed planning dependency: ${dependencyId}`,
-            `Dependency summary: ${dependencyResult.summary}`,
-          ].join("\n");
-        });
-
-        const chunkInput: TaskPlanRequestInput = {
-          ...input,
-          userRequest: chunk.description,
-          context: [
-            ...(input.context ?? []),
-            `Original user task: ${input.userRequest}`,
-            `Current chunk ID: ${chunk.id}`,
-            `Current chunk objective: ${chunk.description}`,
-            ...dependencyContext,
-          ],
-        };
-
-        const rawPlan = await requestJson(
-          `task_plan_${chunk.id.replace(/[^a-zA-Z0-9_-]/g, "_")}`,
-          PLAN_JSON_SCHEMA,
-          LOCAL_SYSTEM,
-          buildPrompt(chunkInput),
-          PLAN_CHUNK_MAX_OUTPUT_TOKENS,
-        );
-
-        let result: ProviderResult;
-
-        try {
-          result = normalizeProviderResponse(rawPlan);
-        } catch (error) {
-          throw Object.assign(
-            new Error(
-              error instanceof Error
-                ? error.message
-                : `Chunk "${chunk.id}" returned an invalid plan.`,
-            ),
-            { code: "invalid_response", status: 502 },
-          );
+        if (!dependencyResult) {
+          throw new Error(`Missing completed planning dependency: ${dependencyId}`);
         }
 
-        return { chunkId: chunk.id, result };
-      }),
-    );
+        return [
+          `Completed planning dependency: ${dependencyId}`,
+          `Dependency summary: ${dependencyResult.summary}`,
+        ].join("\n");
+      });
 
-    // Preserve dependency order when combining completed batches.
-    for (const item of batch) {
+      const chunkInput: TaskPlanRequestInput = {
+        ...input,
+        userRequest: chunk.description,
+        context: [
+          ...(input.context ?? []),
+          `Original user task: ${input.userRequest}`,
+          `Current chunk ID: ${chunk.id}`,
+          `Current chunk objective: ${chunk.description}`,
+          ...dependencyContext,
+        ],
+      };
+
+      const result = await planDirect(chunkInput);
+      const item = { chunkId: chunk.id, result };
       resultsById.set(item.chunkId, item.result);
       completedIds.add(item.chunkId);
       orderedPlans.push(item);
@@ -372,11 +456,7 @@ export async function generateTaskPlan(
     return mergeChunkPlans(orderedPlans);
   } catch (error) {
     throw Object.assign(
-      new Error(
-        error instanceof Error
-          ? error.message
-          : "Unable to combine the chunk plans.",
-      ),
+      new Error(error instanceof Error ? error.message : "Unable to combine the chunk plans."),
       { code: "invalid_response", status: 502 },
     );
   }

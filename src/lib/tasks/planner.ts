@@ -83,6 +83,7 @@ export function planRealObserveSteps(target: DesktopTarget): PlannedStep[] {
 }
 
 const INPUT_ACTIONS: ActionKind[] = [
+  "launch_app",
   "focus_window",
   "click",
   "type_text",

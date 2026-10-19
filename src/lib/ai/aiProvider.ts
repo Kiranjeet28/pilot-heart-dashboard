@@ -16,6 +16,12 @@ import {
   buildPlanPrompt,
   uniqueContext,
 } from "@/lib/ai/plan-prompt";
+import { logInferenceTiming, type InferencePurpose } from "@/lib/ai/inference-log";
+import {
+  PLAN_MALFORMED_REPAIR_LIMIT,
+  PLAN_SIMPLE_MAX_OUTPUT_TOKENS,
+} from "@/lib/tasks/task-plan-orchestrator";
+import { isSimpleDesktopTask } from "@/lib/tasks/simple-task";
 import type { AccountProfile, Provider } from "@/lib/types";
 
 export type AiMode = "auto" | "gemini" | "local";
@@ -28,8 +34,8 @@ export const LOCAL_HEALTH_TIMEOUT_MS = 2_000;
 export const LOCAL_IDLE_TIMEOUT_MS = 90_000;
 /** …or when the whole call exceeds this hard cap. */
 export const LOCAL_HARD_CAP_MS = 15 * 60_000;
-/** Reduced from 1024 to 700 tokens: sufficient for up to 12 concise steps without truncation. */
-export const LOCAL_MAX_TOKENS = 700;
+/** Cap for complex batches. Simple tasks use PLAN_SIMPLE_MAX_OUTPUT_TOKENS. */
+export const LOCAL_MAX_TOKENS = 500;
 export const LOCAL_TOKEN_BUDGET = 7000;
 export const CHARS_PER_TOKEN = 3.5;
 export const GEMINI_COOLDOWN_MS = 1800000;
@@ -315,6 +321,7 @@ interface StreamOutcome {
   ok: boolean;
   text: string;
   tokens: number;
+  generatedTokens?: number;
   elapsedMs: number;
   timeToFirstTokenMs?: number;
   promptMs?: number;
@@ -343,6 +350,7 @@ export async function streamLocalChat(
   let promptTokens: number | undefined;
   let cacheTokens: number | undefined;
   let finishReason: string | undefined;
+  let reportedGeneratedTokens: number | undefined;
 
   let reason: StreamOutcome["error"];
   const onAbort = () => {
@@ -418,13 +426,19 @@ export async function streamLocalChat(
               prompt_ms?: number;
               prompt_n?: number;
               cache_n?: number;
+              predicted_n?: number;
             };
+            usage?: { completion_tokens?: number };
           };
 
           if (chunk.timings) {
             promptMs = chunk.timings.prompt_ms;
             promptTokens = chunk.timings.prompt_n;
             cacheTokens = chunk.timings.cache_n;
+            reportedGeneratedTokens = chunk.timings.predicted_n ?? reportedGeneratedTokens;
+          }
+          if (typeof chunk.usage?.completion_tokens === "number") {
+            reportedGeneratedTokens = chunk.usage.completion_tokens;
           }
 
           const fr = chunk.choices?.[0]?.finish_reason;
@@ -449,7 +463,8 @@ export async function streamLocalChat(
     return {
       ok: true,
       text,
-      tokens,
+      tokens: reportedGeneratedTokens ?? tokens,
+      ...compact({ generatedTokens: reportedGeneratedTokens }),
       elapsedMs: Date.now() - started,
       ...compact({
         timeToFirstTokenMs,
@@ -481,6 +496,8 @@ async function localOnce(
   request: AIRequest,
   reminder: boolean,
   signal?: AbortSignal,
+  purpose: InferencePurpose = "planning",
+  reminderDetail?: string,
 ): Promise<{
   result: AIProviderResult;
   tokens: number;
@@ -503,10 +520,11 @@ async function localOnce(
     };
   }
 
+  const repairNote = reminder ? (reminderDetail ? `${REMINDER} ${reminderDetail}` : REMINDER) : "";
   const messages = stripImageParts([
     { role: "system", content: LOCAL_SYSTEM },
     { role: "user", content: prompt },
-    ...(reminder ? [{ role: "user", content: REMINDER }] : []),
+    ...(repairNote ? [{ role: "user", content: repairNote }] : []),
   ]);
 
   setStatus({ localTokens: 0, localThinking: false });
@@ -516,7 +534,9 @@ async function localOnce(
       model: "qwen",
       messages,
       temperature: 0.2,
-      max_tokens: LOCAL_MAX_TOKENS,
+      max_tokens: isSimpleDesktopTask(request.userRequest)
+        ? PLAN_SIMPLE_MAX_OUTPUT_TOKENS
+        : LOCAL_MAX_TOKENS,
       chat_template_kwargs: { enable_thinking: false },
       response_format: {
         type: "json_schema",
@@ -544,6 +564,15 @@ async function localOnce(
   };
 
   if (!out.ok) {
+    logInferenceTiming({
+      purpose,
+      durationMs: out.elapsedMs,
+      timeToFirstTokenMs: out.timeToFirstTokenMs,
+      promptTokens: out.promptTokens,
+      generatedTokens: out.tokens,
+      valid: false,
+      validationError: out.error ?? "stream error",
+    });
     if (out.error === "cancelled") {
       return { result: fail("unknown", "Cancelled"), ...meta };
     }
@@ -588,6 +617,15 @@ async function localOnce(
   const content = stripThinking(out.text);
 
   if (!content) {
+    logInferenceTiming({
+      purpose,
+      durationMs: out.elapsedMs,
+      timeToFirstTokenMs: out.timeToFirstTokenMs,
+      promptTokens: out.promptTokens,
+      generatedTokens: out.generatedTokens ?? out.tokens,
+      valid: false,
+      validationError: "empty response",
+    });
     return {
       result: fail("invalid_response", "Local model returned an empty answer"),
       ...meta,
@@ -597,11 +635,23 @@ async function localOnce(
   // Diagnostic classification: markdown fences, plain text, malformed JSON, or schema error
   let cleaned = content.trim();
   if (/```(?:json)?/i.test(cleaned)) {
-    cleaned = cleaned.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "").trim();
+    cleaned = cleaned
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/, "")
+      .trim();
   }
 
   const match = cleaned.match(/\{[\s\S]*\}/);
   if (!match) {
+    logInferenceTiming({
+      purpose,
+      durationMs: out.elapsedMs,
+      timeToFirstTokenMs: out.timeToFirstTokenMs,
+      promptTokens: out.promptTokens,
+      generatedTokens: out.generatedTokens ?? out.tokens,
+      valid: false,
+      validationError: "response did not contain a JSON object",
+    });
     return {
       result: fail(
         "invalid_response",
@@ -621,6 +671,15 @@ async function localOnce(
       // Repair common malformed JSON returned by the local model.
       parsed = JSON.parse(jsonrepair(rawJson));
     } catch {
+      logInferenceTiming({
+        purpose,
+        durationMs: out.elapsedMs,
+        timeToFirstTokenMs: out.timeToFirstTokenMs,
+        promptTokens: out.promptTokens,
+        generatedTokens: out.generatedTokens ?? out.tokens,
+        valid: false,
+        validationError: "invalid JSON",
+      });
       return {
         result: fail(
           "invalid_response",
@@ -634,18 +693,35 @@ async function localOnce(
   }
 
   try {
+    const result = normalizeProviderResponse(parsed);
+    logInferenceTiming({
+      purpose,
+      durationMs: out.elapsedMs,
+      timeToFirstTokenMs: out.timeToFirstTokenMs,
+      promptTokens: out.promptTokens,
+      generatedTokens: out.tokens,
+      valid: true,
+    });
     return {
-      result: normalizeProviderResponse(parsed),
+      result,
       ...meta,
     };
   } catch (e) {
+    const message =
+      e instanceof Error
+        ? `Local Qwen returned an invalid plan: ${e.message}`
+        : "Local Qwen returned invalid JSON";
+    logInferenceTiming({
+      purpose,
+      durationMs: out.elapsedMs,
+      timeToFirstTokenMs: out.timeToFirstTokenMs,
+      promptTokens: out.promptTokens,
+      generatedTokens: out.tokens,
+      valid: false,
+      validationError: message,
+    });
     return {
-      result: fail(
-        "invalid_response",
-        e instanceof Error
-          ? `Local Qwen returned an invalid plan: ${e.message}`
-          : "Local Qwen returned invalid JSON",
-      ),
+      result: fail("invalid_response", message),
       ...meta,
     };
   }
@@ -678,13 +754,21 @@ export async function callLocal(
       // Narrowly scoped single repair attempt only when response was invalid JSON
       // (not for oversize or truncation: a retry would hit the same limit).
       if (
+        PLAN_MALFORMED_REPAIR_LIMIT > 0 &&
         !a.result.ok &&
         a.result.code === "invalid_response" &&
+        !/click requires x and y|do not guess coordinates/i.test(a.result.message) &&
         a.result.message !== TOO_LARGE_MESSAGE &&
         a.result.message !== TRUNCATED_MESSAGE &&
         !isUserAbort(signal)
       ) {
-        a = await localOnce(request, true, signal);
+        a = await localOnce(
+          request,
+          true,
+          signal,
+          "repair",
+          `The previous response failed validation: ${a.result.message}`,
+        );
         tokens += a.tokens;
         ms += a.elapsedMs;
       }
