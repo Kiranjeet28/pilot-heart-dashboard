@@ -147,16 +147,16 @@ describe("readiness in REAL LOCAL mode", () => {
     targets: DEFAULT_TARGETS,
     tasks: [],
     emergencyStop: false,
-    worker: "connected" as const,
+    worker: { connected: true, message: "ok" },
   };
   it("blocks tasks when the real worker is not connected", () => {
     expect(
-      checkReadiness({ ...base, realWorker: { connected: false, message: "Not paired" } }).some(
+      checkReadiness({ ...base, worker: { connected: false, message: "Not paired" } }).some(
         (i) => i.includes("Not paired"),
       ),
     ).toBe(true);
   });
   it("allows tasks when the real worker is connected", () => {
-    expect(checkReadiness({ ...base, realWorker: { connected: true, message: "ok" } })).toEqual([]);
+    expect(checkReadiness({ ...base, worker: { connected: true, message: "ok" } })).toEqual([]);
   });
 });

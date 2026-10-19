@@ -2,7 +2,7 @@
 // Milestone 2 extends it compatibly: new members are optional so the mock keeps working.
 import type { ValidatedActionRequest } from "./action-validation";
 
-export type WorkerMode = "demo" | "live";
+export type WorkerMode = "live";
 export type WorkerConnection = "connected" | "disconnected" | "error" | "busy" | "pairing";
 
 export interface WorkerStatus {

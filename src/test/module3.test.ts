@@ -4,10 +4,10 @@ import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   GeminiProvider,
-  MockAIProvider,
   createAIProvider,
   normalizeProviderResponse,
 } from "@/lib/ai/provider";
+import { MockAIProvider } from "@/test/helpers/mock-ai";
 import { handleTaskPlanRequest, isRateLimited } from "@/lib/server/task-plan";
 import { canTransition } from "@/lib/tasks/state-machine";
 import { createTask, transitionTask } from "@/lib/tasks/task-manager";

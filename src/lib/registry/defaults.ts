@@ -112,13 +112,18 @@ export const DEFAULT_TARGETS: DesktopTarget[] = [
     processName: "msedge.exe",
     interactionMode: "observe_only",
   },
+  {
+    id: "desktop",
+    displayName: "Windows Desktop",
+    kind: "custom",
+    launchPath: "",
+    windowTitleContains: "",
+    processName: "",
+    interactionMode: "assisted",
+  },
 ];
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  workerSimulation: "connected",
-  failureRate: 0.1,
-  stepDelayMs: 1200,
-  workerMode: "demo",
   workerPort: 8765,
   adaptiveChecks: true,
   aiMode: "local",

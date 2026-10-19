@@ -14,4 +14,13 @@ describe("App routing", () => {
 
     expect(matches.at(-1)?.routeId).not.toBe(rootRouteId);
   });
+
+  it("keeps only Main and Settings as app pages while retaining task API routes", () => {
+    const router = createRouter({ routeTree, context: { queryClient: new QueryClient() } });
+    const pages = Object.keys(router.routesById)
+      .filter((id) => id.startsWith("/") && !id.startsWith("/api/"))
+      .sort();
+    expect(pages).toEqual(["/", "/settings"]);
+    expect(router.matchRoutes("/settings").at(-1)?.routeId).toBe("/settings");
+  });
 });

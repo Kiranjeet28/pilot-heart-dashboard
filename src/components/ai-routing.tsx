@@ -1,13 +1,8 @@
 import { useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
-import {
-  aiStatus,
-  checkLocalHealth,
-  isLoopbackUrl,
-  runLocalDiagnostics,
-  DEFAULT_LOCAL_BASE_URL,
-  type DiagnosticsReport,
-} from "@/lib/ai/aiProvider";
+import { aiStatus, isLoopbackUrl, runLocalDiagnostics, DEFAULT_LOCAL_BASE_URL, type DiagnosticsReport } from "@/lib/ai/aiProvider";
+import { routedProvider } from "@/lib/ai/aiProvider";
+import type { Provider } from "@/lib/types";
 import { actions, useAppState } from "@/store/app-store";
 import { Panel } from "./panel";
 import { Button } from "@/components/ui/button";
@@ -15,169 +10,131 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
 const SERVER_STATUS = aiStatus.get();
-export const useAiStatus = () =>
-  useSyncExternalStore(aiStatus.subscribe, aiStatus.get, () => SERVER_STATUS);
+export const useAiStatus = () => useSyncExternalStore(aiStatus.subscribe, aiStatus.get, () => SERVER_STATUS);
 
-/** Header badge: reflects the active local Qwen provider or offline state. */
-export function AiProviderBadge() {
-  const s = useAiStatus();
-  const active = s.active === "offline" ? "offline" : "local";
-  const cls =
-    active === "local"
-      ? "border-info/40 bg-info/10 text-info"
-      : "border-destructive/40 bg-destructive/10 text-destructive";
-  return (
-    <span
-      className={`rounded border px-2 py-0.5 font-mono text-[11px] ${cls}`}
-      title="Local Qwen planner"
-    >
-      AI: {active === "local" ? "Local Qwen" : "Offline"}
-    </span>
-  );
-}
-
-/**
- * Shown in the current task while local Qwen is planning.
- * Accurately distinguishes prompt processing from active token generation.
- */
 export function LocalThinkingNote() {
-  const s = useAiStatus();
-  if (s.phase === "idle" && !s.localThinking) return null;
-
-  const msg =
-    s.phase === "connecting"
-      ? "Connecting to local Qwen..."
-      : s.phase === "processing_prompt"
-        ? "Local Qwen is processing task prompt..."
-        : `Local Qwen is generating plan... ${s.localTokens} tokens`;
-
-  return <p className="mt-2 animate-pulse text-xs text-info font-mono">{msg}</p>;
+  const status = useAiStatus();
+  if (status.phase === "idle" && !status.localThinking) return null;
+  const message = status.phase === "connecting" ? "Connecting to local model…" : status.phase === "processing_prompt" ? "Local model is processing the task…" : `Local model is generating a plan… ${status.localTokens} tokens`;
+  return <p className="mt-2 animate-pulse font-mono text-xs text-info">{message}</p>;
 }
+
+type TestState = { state: "untested" | "testing" | "available" | "error"; message?: string };
 
 export function AiRoutingPanel() {
-  const settings = useAppState((x) => x.settings);
-  const s = useAiStatus();
+  const settings = useAppState((state) => state.settings);
+  const providers = useAppState((state) => state.providers);
+  const profiles = useAppState((state) => state.profiles);
+  const targets = useAppState((state) => state.targets);
+  const localStatus = useAiStatus();
   const [url, setUrl] = useState(settings.localBaseUrl);
-  const [testing, setTesting] = useState(false);
+  const [localTesting, setLocalTesting] = useState(false);
   const [diag, setDiag] = useState<DiagnosticsReport | null>(null);
   const [diagRunning, setDiagRunning] = useState(false);
+  const [tests, setTests] = useState<Record<string, TestState>>({});
+
+  function updateModel(id: string, model: string) {
+    const provider = providers.find((item) => item.id === id);
+    if (provider && model.trim()) actions.upsertProvider({ ...provider, model: model.trim(), connectionStatus: "configured_unverified" });
+    setTests((current) => ({ ...current, [id]: { state: "untested" } }));
+  }
+
+  async function testProvider(provider: Provider) {
+    if (provider.id === "qwen") {
+      setLocalTesting(true);
+      setTests((current) => ({ ...current, qwen: { state: "testing" } }));
+      try {
+        const report = await runLocalDiagnostics();
+        const ok = report.health.ok && report.chat?.ok === true;
+        const message = report.chat?.ok ? `Model inference succeeded in ${(report.chat.latencyMs / 1000).toFixed(1)} seconds.` : report.failure ? report.hint : report.health.message;
+        setTests((current) => ({ ...current, qwen: { state: ok ? "available" : "error", message } }));
+        if (ok) toast.success("Local Model is available"); else toast.error(message);
+      } finally { setLocalTesting(false); }
+      return;
+    }
+    const profile = profiles.find((item) => item.providerId === provider.id);
+    const targetId = targets[0]?.id;
+    if (!profile || !targetId) {
+      setTests((current) => ({ ...current, [provider.id]: { state: "error", message: "Provider profile or desktop target is missing." } }));
+      return;
+    }
+    setTests((current) => ({ ...current, [provider.id]: { state: "testing" } }));
+    try {
+      // A planning-only probe. The returned action is displayed as status and is never sent to the worker.
+      const result = await routedProvider(provider, profile).getNextStep({
+        userRequest: "For connection testing only, return one harmless read_screen observation step. Do not click, type, or launch anything.",
+        targetId,
+        provider,
+        profile,
+        modelOverride: provider.model,
+        timeoutMs: 30000,
+      });
+      if (!result.ok) throw new Error(result.message);
+      const useful = result.steps.some((item) => item.action.kind === "read_screen");
+      if (!useful) throw new Error("Provider responded, but did not return the harmless observation plan.");
+      setTests((current) => ({ ...current, [provider.id]: { state: "available", message: `Planning request succeeded with ${provider.model}. No desktop action was run.` } }));
+      toast.success(`${provider.displayName} is available`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Provider test failed.";
+      setTests((current) => ({ ...current, [provider.id]: { state: "error", message } }));
+      toast.error(message);
+    }
+  }
 
   async function diagnose() {
-    setDiagRunning(true);
-    setDiag(null);
-    setDiag(await runLocalDiagnostics());
-    setDiagRunning(false);
+    setDiagRunning(true); setDiag(null);
+    try { setDiag(await runLocalDiagnostics()); } finally { setDiagRunning(false); }
   }
 
-  async function test() {
-    setTesting(true);
-    const r = await checkLocalHealth(true);
-    setTesting(false);
-    if (r.ok) toast.success(`${r.message} (${r.latencyMs} ms)`);
-    else toast.error(r.message);
+  function saveLocalUrl() {
+    const value = url.trim() || DEFAULT_LOCAL_BASE_URL;
+    if (!isLoopbackUrl(value)) {
+      toast.error("Use a loopback address on this PC, like http://127.0.0.1:8081");
+      setUrl(settings.localBaseUrl);
+      return;
+    }
+    const normalized = value.replace(/\/+$/, "");
+    actions.updateSettings({ localBaseUrl: normalized });
+    const local = providers.find((provider) => provider.id === "qwen");
+    if (local) updateModel("qwen", local.model);
   }
 
+  const local = providers.find((provider) => provider.id === "qwen");
+  const gemini = providers.find((provider) => provider.id === "gemini");
+  const grok = providers.find((provider) => provider.id === "grok");
   return (
-    <Panel title="AI planner providers">
-      <div className="space-y-4">
-        <div className="rounded border bg-muted/40 p-3 text-xs space-y-1">
-          <p className="font-medium text-foreground">Choose a planner per task</p>
-          <p className="text-muted-foreground">
-            Select Local Qwen, Google Gemini, or Grok in the task configuration. Gemini uses the
-            server-side <code className="font-mono text-foreground">GEMINI_API_KEY</code> and Grok
-            uses <code className="font-mono text-foreground">XAI_API_KEY</code>; neither key is sent
-            to the browser. All planners use the same action validation and approval rules.
-          </p>
+    <Panel title="AI provider settings">
+      <div className="space-y-5">
+        <p className="text-sm text-muted-foreground">Choose Local Model, Gemini, or Grok for each task on Main. Provider requests are sent only to the selected provider. API keys stay in the server environment and are never stored in this browser.</p>
+        {local ? <ProviderRow provider={local} /> : null}
+        <div className="space-y-2">
+          <Label htmlFor="local-url">Local model URL</Label>
+          <div className="flex gap-2"><Input id="local-url" value={url} onChange={(event) => setUrl(event.target.value)} onBlur={saveLocalUrl} /><Button variant="outline" onClick={() => local && void testProvider(local)} disabled={localTesting}>{localTesting ? "Testing…" : "Test Local Model"}</Button></div>
+          <p className="text-xs text-muted-foreground">Loopback addresses only. The local model is text-only; screen verification may be reported as unverified.</p>
+          {tests["qwen"]?.message ? <TestMessage status={tests["qwen"].state} message={tests["qwen"].message!} /> : localStatus.active === "offline" ? <TestMessage status="error" message="No successful local model check yet." /> : null}
         </div>
-
-        <div className="space-y-1.5">
-          <Label htmlFor="local-url">Local server address</Label>
-          <div className="flex gap-2">
-            <Input
-              id="local-url"
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              onBlur={() => {
-                const v = url.trim() || DEFAULT_LOCAL_BASE_URL;
-                if (isLoopbackUrl(v)) {
-                  actions.updateSettings({ localBaseUrl: v.replace(/\/+$/, "") });
-                } else {
-                  toast.error("Use a loopback address on this PC, like http://127.0.0.1:8081");
-                  setUrl(settings.localBaseUrl);
-                }
-              }}
-            />
-            <Button variant="outline" onClick={test} disabled={testing}>
-              {testing ? "Testing…" : "Test local model"}
-            </Button>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            The local Qwen model is text-only. Screen checks are safely skipped as unverified
-            without sending screenshots to external services.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onClick={diagnose} disabled={diagRunning}>
-            {diagRunning ? "Running…" : "Run diagnostics"}
-          </Button>
-        </div>
-
-        {diag ? (
-          <div className="rounded border bg-background/50 p-2 font-mono text-[11px] space-y-1">
-            <p>
-              Health: {diag.health.ok ? "OK" : "failed"} · {diag.health.latencyMs} ms —{" "}
-              {diag.health.message}
-            </p>
-            {diag.chat ? (
-              <p>
-                Test chat: {diag.chat.ok ? `"${diag.chat.reply}"` : "failed"} ·{" "}
-                {(diag.chat.latencyMs / 1000).toFixed(1)} s · {diag.chat.tokens} tokens ·{" "}
-                {diag.chat.tokensPerSec} tokens/s
-              </p>
-            ) : null}
-            <p className={diag.failure ? "text-destructive" : "text-success"}>
-              {diag.failure ? `Problem: ${diag.failure.replace(/_/g, " ")}. ` : ""}
-              {diag.hint}
-            </p>
-          </div>
-        ) : null}
-
-        {s.log.length ? (
-          <details className="text-xs">
-            <summary className="cursor-pointer text-muted-foreground font-medium">
-              Recent planning requests ({s.log.length})
-            </summary>
-            <ul className="mt-1 space-y-1 font-mono text-[11px]">
-              {s.log.slice(0, 10).map((e) => (
-                <li
-                  key={e.at + e.note}
-                  className={`p-1.5 rounded border ${e.ok ? "bg-muted/30" : "bg-destructive/10 text-destructive"}`}
-                >
-                  <div className="flex justify-between">
-                    <span>{new Date(e.at).toLocaleTimeString()} · local Qwen</span>
-                    <span>
-                      {e.latencyMs !== undefined ? `${(e.latencyMs / 1000).toFixed(1)} s` : ""}
-                      {e.outputTokens !== undefined ? ` · ${e.outputTokens} tok` : ""}
-                      {e.tokensPerSec !== undefined ? ` · ${e.tokensPerSec} tok/s` : ""}
-                    </span>
-                  </div>
-                  {e.promptMs !== undefined ? (
-                    <div className="text-[10px] text-muted-foreground">
-                      Prompt prefill: {e.promptMs.toFixed(0)} ms ({e.promptTokens ?? 0} tokens,{" "}
-                      {e.cacheTokens ?? 0} cached)
-                      {e.timeToFirstTokenMs
-                        ? ` · TTFT: ${(e.timeToFirstTokenMs / 1000).toFixed(1)} s`
-                        : ""}
-                    </div>
-                  ) : null}
-                  <div className="truncate text-muted-foreground">{e.note}</div>
-                </li>
-              ))}
-            </ul>
-          </details>
-        ) : null}
+        {gemini ? <ServerProvider provider={gemini} envName="GEMINI_API_KEY" test={testProvider} testState={tests["gemini"]} onModel={updateModel} /> : null}
+        {grok ? <ServerProvider provider={grok} envName="XAI_API_KEY" test={testProvider} testState={tests["grok"]} onModel={updateModel} /> : null}
+        <div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" onClick={diagnose} disabled={diagRunning}>{diagRunning ? "Checking…" : "Local model diagnostics"}</Button></div>
+        {diag ? <div className="rounded border bg-background/50 p-2 font-mono text-[11px] space-y-1"><p>Health: {diag.health.ok ? "Available" : "Failed"} · {diag.health.latencyMs} ms — {diag.health.message}</p>{diag.chat ? <p>Model response: {diag.chat.ok ? "received" : "failed"} · {(diag.chat.latencyMs / 1000).toFixed(1)} s · {diag.chat.tokens} tokens</p> : null}<p className={diag.failure ? "text-destructive" : "text-success"}>{diag.hint}</p></div> : null}
       </div>
     </Panel>
   );
+}
+
+function ServerProvider({ provider, envName, test, testState, onModel }: { provider: Provider; envName: string; test: (provider: Provider) => Promise<void>; testState: TestState | undefined; onModel: (id: string, model: string) => void }) {
+  const [model, setModel] = useState(provider.model);
+  return <div className="space-y-2 rounded-md border p-3">
+    <div className="flex flex-wrap items-center justify-between gap-2"><div><p className="text-sm font-medium">{provider.displayName}</p><p className="text-xs text-muted-foreground">Server environment variable: <code className="font-mono">{envName}</code></p></div><Button size="sm" variant="outline" onClick={() => void test({ ...provider, model: model.trim() || provider.model })} disabled={testState?.state === "testing"}>{testState?.state === "testing" ? "Testing…" : `Test ${provider.displayName}`}</Button></div>
+    <div className="space-y-1"><Label htmlFor={`${provider.id}-model`}>Model</Label><Input id={`${provider.id}-model`} value={model} onChange={(event) => setModel(event.target.value)} onBlur={() => onModel(provider.id, model)} /></div>
+    {testState?.message ? <TestMessage status={testState.state} message={testState.message} /> : <p className="text-xs text-muted-foreground">Not tested in this session.</p>}
+  </div>;
+}
+
+function ProviderRow({ provider }: { provider: Provider }) {
+  return <div className="flex items-center justify-between rounded-md border p-3"><div><p className="text-sm font-medium">{provider.displayName}</p><p className="text-xs text-muted-foreground">Model alias: <code className="font-mono">{provider.model}</code></p></div></div>;
+}
+
+function TestMessage({ status, message }: { status: TestState["state"]; message: string }) {
+  return <p className={`text-xs ${status === "available" ? "text-success" : status === "error" ? "text-destructive" : "text-muted-foreground"}`} role="status">{message}</p>;
 }

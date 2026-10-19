@@ -116,6 +116,7 @@ describe("replan limits and merge", () => {
     expect(ctx.every((c) => c.length <= 500)).toBe(true);
   });
   it("only checks after screen-changing actions", () => {
+    expect(shouldCheckAfter("launch_app")).toBe(true);
     expect(shouldCheckAfter("click")).toBe(true);
     expect(shouldCheckAfter("read_screen")).toBe(false);
     expect(shouldCheckAfter("wait")).toBe(false);

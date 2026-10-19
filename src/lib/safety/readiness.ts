@@ -1,4 +1,4 @@
-import type { AccountProfile, DesktopTarget, Provider, Task, WorkerSimulation } from "@/lib/types";
+import type { AccountProfile, DesktopTarget, Provider, Task } from "@/lib/types";
 import { isActive } from "@/lib/tasks/state-machine";
 
 export interface ReadinessInput {
@@ -10,9 +10,7 @@ export interface ReadinessInput {
   targets: DesktopTarget[];
   tasks: Task[];
   emergencyStop: boolean;
-  worker: WorkerSimulation;
-  /** When set (REAL LOCAL mode), replaces the demo `worker` check. */
-  realWorker?: { connected: boolean; message: string } | undefined;
+  worker: { connected: boolean; message: string };
 }
 
 /** Returns blocking issues; empty array means a task may start. */
@@ -32,9 +30,7 @@ export function checkReadiness(i: ReadinessInput): string[] {
   else if (provider && profile.providerId !== provider.id)
     issues.push(`Profile "${profile.name}" belongs to a different provider.`);
   if (!i.targets.some((t) => t.id === i.targetId)) issues.push("Select a desktop target.");
-  if (i.realWorker) {
-    if (!i.realWorker.connected) issues.push(`Real worker not connected: ${i.realWorker.message}`);
-  } else if (i.worker === "disconnected") issues.push("Worker is disconnected.");
+  if (!i.worker.connected) issues.push(`Real worker not connected: ${i.worker.message}`);
   if (i.tasks.some((t) => isActive(t.status)))
     issues.push("Another task is active. Finish or cancel it first.");
   return issues;

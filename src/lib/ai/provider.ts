@@ -327,34 +327,6 @@ export class GrokProvider implements ProviderAdapter {
   }
 }
 
-export class MockAIProvider implements ProviderAdapter {
-  readonly name = "Mock AI";
-  readonly type = "mock" as const;
-
-  async getNextStep(request: AIRequest): Promise<AIProviderResult> {
-    const plan = [
-      `Understand the task: ${request.userRequest}`,
-      "Break it into a safe desktop action.",
-      "Verify the outcome before marking the task complete.",
-    ];
-    const nextAction: ActionRequest = {
-      kind: "read_screen",
-      targetId: request.targetId ?? "desktop",
-      description: "Inspect the current desktop state before acting.",
-    };
-    return {
-      ok: true,
-      plan,
-      summary: "Mock plan ready for tests.",
-      nextAction,
-      requiresApproval: false,
-      steps: [
-        { action: nextAction, requiresApproval: false, verification: { kind: "screen_capture" } },
-      ],
-    };
-  }
-}
-
 class UnsupportedProvider implements ProviderAdapter {
   readonly type = "custom" as const;
   constructor(readonly name: string) {}

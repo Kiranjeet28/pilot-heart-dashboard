@@ -232,3 +232,29 @@ describe("Local-only Qwen planning (Acceptance Criteria 1-10)", () => {
     expect(OFFLINE_MESSAGE).toContain("http://127.0.0.1:8081");
   });
 });
+
+describe("selected AI provider routing", () => {
+  it.each(["gemini", "grok"] as const)("sends %s plans to its server-side provider without local fallback", async (providerId) => {
+    const provider = DEFAULT_PROVIDERS.find((item) => item.id === providerId)!;
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({
+      summary: "Provider test plan",
+      plan: ["Observe only"],
+      steps: [{ action: { kind: "read_screen", targetId: "desktop", description: "Observe" }, requiresApproval: false }],
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await routedProvider(provider).getNextStep({
+      provider,
+      userRequest: "Provider connectivity test. Return one read_screen action only.",
+      targetId: "desktop",
+      modelOverride: provider.model,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toBe("/api/tasks/plan");
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as Record<string, unknown>;
+    expect(body["providerId"]).toBe(providerId);
+    expect(body["modelOverride"]).toBe(provider.model);
+  });
+});

@@ -33,7 +33,7 @@ export interface ApprovedScope {
 /** Harmless kinds that are always allowed in a replan. */
 const ALWAYS_ALLOWED: ActionKind[] = ["read_screen", "wait"];
 /** Actions that change the screen and therefore get a check afterwards. */
-const CHECKED_KINDS: ActionKind[] = ["focus_window", "click", "type_text", "key_press", "paste"];
+const CHECKED_KINDS: ActionKind[] = ["launch_app", "focus_window", "click", "type_text", "key_press", "paste"];
 
 export const shouldCheckAfter = (kind: ActionKind) => CHECKED_KINDS.includes(kind);
 

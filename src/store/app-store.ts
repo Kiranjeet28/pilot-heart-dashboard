@@ -1,4 +1,4 @@
-// Central app store + demo task runner. UI reads via useAppState; mutations go through `actions`.
+// Central app store + real task runner. UI reads via useAppState; mutations go through `actions`.
 import { useSyncExternalStore } from "react";
 import type {
   AccountProfile,
@@ -11,7 +11,6 @@ import type {
   Provider,
   Task,
   TaskStatus,
-  WorkerSelection,
 } from "@/lib/types";
 import {
   DEFAULT_PROFILES,
@@ -21,7 +20,6 @@ import {
 } from "@/lib/registry/defaults";
 import { canTransition, isActive } from "@/lib/tasks/state-machine";
 import { normalizeProviderPlan } from "@/lib/tasks/planner";
-import { MockAIProvider } from "@/lib/ai/provider";
 import { verifyActionOutcome } from "@/lib/tasks/verification";
 import {
   MAX_REPLANS,
@@ -36,7 +34,6 @@ import {
 import { requestStepCheck } from "@/lib/ai/step-check-client";
 import { configureAiRouting, routedProvider } from "@/lib/ai/aiProvider";
 import { validateAction, type ValidatedActionRequest } from "@/lib/worker/action-validation";
-import { MockDesktopWorker } from "@/lib/worker/mock-worker";
 import type { ActionResult, DesktopWorker, ObservationResult } from "@/lib/worker/worker";
 import { LocalHttpWorker } from "@/lib/worker/local-worker";
 import { clearSession, readSession, writeSession } from "@/lib/worker/token-store";
@@ -84,7 +81,7 @@ const initial: AppState = {
   activity: [],
   settings: DEFAULT_SETTINGS,
   emergencyStop: false,
-  connection: { state: "connected", message: "Demo worker (simulated)" },
+  connection: { state: "disconnected", message: "Checking local desktop worker…" },
   realActionsConfirmed: false,
 };
 
@@ -106,15 +103,11 @@ function persist(p: Partial<AppState>) {
       profiles: state.profiles,
       targets: state.targets,
     });
-  // Real screenshots are never written to storage — only simulated previews persist.
+  // Screenshots never persist, including old simulated previews.
   if (p.tasks)
     save(
       "tasks",
-      state.tasks.map((t) =>
-        t.lastObservation && !t.lastObservation.simulated
-          ? { ...t, lastObservation: undefined }
-          : t,
-      ),
+      state.tasks.map((t) => (t.lastObservation ? { ...t, lastObservation: undefined } : t)),
     );
   if (p.activity) save("activity", state.activity);
   if (p.settings || "emergencyStop" in p)
@@ -138,10 +131,6 @@ export function useAppState<T>(selector: (s: AppState) => T): T {
 }
 
 // ---------- worker ----------
-const mockWorker = new MockDesktopWorker({
-  isConnected: () => state.settings.workerSimulation === "connected",
-  failureRate: () => state.settings.failureRate,
-});
 export const localWorker = new LocalHttpWorker({
   port: () => state.settings.workerPort,
   getToken: () => readSession()?.token ?? null,
@@ -160,14 +149,11 @@ configureAiRouting(() => ({
   mode: state.settings.aiMode,
   localBaseUrl: state.settings.localBaseUrl,
 }));
-const isReal = () => state.settings.workerMode === "real_local";
-export const currentWorker = (): DesktopWorker => (isReal() ? localWorker : mockWorker);
+export const currentWorker = (): DesktopWorker => localWorker;
 
 /** Stable facade that always delegates to the selected worker. */
 export const worker: DesktopWorker = {
-  get mode() {
-    return currentWorker().mode;
-  },
+  mode: "live",
   getStatus: () => currentWorker().getStatus(),
   healthCheck: () => currentWorker().healthCheck(),
   observe: (r) => currentWorker().observe(r),
@@ -183,7 +169,7 @@ function log(
   taskId: string | null,
   kind: ActivityKind,
   message: string,
-  simulated = true,
+  simulated = false,
   real = false,
 ) {
   const ev: ActivityEvent = {
@@ -219,7 +205,7 @@ function clearTimer(id: string) {
   if (h) clearTimeout(h);
   timers.delete(id);
 }
-function schedule(id: string, ms = state.settings.stepDelayMs) {
+function schedule(id: string, ms = 300) {
   clearTimer(id);
   timers.set(
     id,
@@ -228,10 +214,9 @@ function schedule(id: string, ms = state.settings.stepDelayMs) {
 }
 
 function fail(id: string, error: string) {
-  const sim = currentWorker().mode === "demo";
   batchStates.delete(id);
   if (transition(id, "failed", { error, summary: `Failed: ${error}` }))
-    log(id, "error", error, sim, !sim);
+    log(id, "error", error, false, true);
 }
 
 /**
@@ -255,22 +240,8 @@ async function checkAndAdapt(
   id: string,
   action: ActionRequest,
   obs: ObservationResult | undefined,
-  sim: boolean,
 ): Promise<"continue" | "handled"> {
   const stillVerifying = () => getTask(id)?.status === "verifying" && !state.emergencyStop;
-  if (sim) {
-    patchTask(id, {
-      lastCheck: {
-        verdict: "ok",
-        reason: "Simulated check",
-        screenSummary: "Target window visible and active",
-        simulated: true,
-        checkedAt: Date.now(),
-      },
-    });
-    log(id, "info", "Screen check (simulated): looks right — no screen sent to AI", true);
-    return "continue";
-  }
   if (!obs?.imageDataUrl || obs.simulated) {
     log(
       id,
@@ -413,9 +384,8 @@ async function tick(id: string) {
     return;
   }
   inFlightTicks.add(id);
-  const w = currentWorker();
-  const sim = w.mode === "demo";
-  const tag = sim ? "[SIMULATED]" : "[REAL]";
+  const w = localWorker;
+  const tag = "[REAL]";
   try {
     if (t.deadlineAt && Date.now() >= t.deadlineAt) return fail(id, "Task execution timed out");
     if (t.status === "queued") {
@@ -423,32 +393,16 @@ async function tick(id: string) {
       if (getTask(id)?.status !== "queued") return;
       // Allow one short startup race when the separately launched local worker
       // has just begun listening. This never starts the worker or polls forever.
-      if (
-        !h.ok &&
-        w.mode === "live" &&
-        h.latencyMs < 1_000 &&
-        h.message.includes("Could not reach the worker at")
-      ) {
+      if (!h.ok && h.latencyMs < 1_000 && h.message.includes("Could not reach the worker at")) {
         await new Promise((resolve) => setTimeout(resolve, 400));
         if (getTask(id)?.status !== "queued") return;
         h = await w.healthCheck();
         if (getTask(id)?.status !== "queued") return;
       }
-      if (!h.ok)
-        return fail(
-          id,
-          sim
-            ? "Worker disconnected — health check failed"
-            : `Real worker unavailable: ${h.message}`,
-        );
-      log(
-        id,
-        "info",
-        `Worker health OK (${h.latencyMs} ms, ${sim ? "demo" : "real local worker"})`,
-        sim,
-      );
+      if (!h.ok) return fail(id, `Real worker unavailable: ${h.message}`);
+      log(id, "info", `Worker health OK (${h.latencyMs} ms, authenticated local worker)`);
       transition(id, "planning");
-      log(id, "info", sim ? "Preparing demo plan" : "Preparing real desktop plan", sim);
+      log(id, "info", "Preparing plan for the real desktop");
       return schedule(id);
     }
     if (t.status === "planning" || t.status === "running") {
@@ -505,41 +459,23 @@ async function tick(id: string) {
         {
           planBatch: async (input) => {
             const batchNum = (bState?.batchCount ?? 0) + 1;
-            log(
-              id,
-              "info",
-              sim
-                ? `Planning batch ${batchNum} with mock provider`
-                : `Planning batch ${batchNum} with ${provider.displayName}`,
-              sim,
-            );
-            return sim
-              ? new MockAIProvider().getNextStep({
-                  taskId: id,
-                  userRequest: input.userRequest,
-                  targetId: t.targetId,
-                  provider,
-                  profile,
-                })
-              : routedProvider(provider, profile, aiAbortFor(id)).getNextStep({
-                  taskId: id,
-                  userRequest: input.userRequest,
-                  targetId: t.targetId,
-                  provider,
-                  profile,
-                  context: input.context,
-                });
+            log(id, "info", `Planning batch ${batchNum} with ${provider.displayName}`);
+            return routedProvider(provider, profile, aiAbortFor(id)).getNextStep({
+              taskId: id,
+              userRequest: input.userRequest,
+              targetId: t.targetId,
+              provider,
+              profile,
+              context: input.context,
+            });
           },
           validateAction: (action) => {
             const act = action as ActionRequest;
-            if (!sim && act.kind === "click") {
-              return { ok: false, reason: "Local Qwen has no visual grounding; refusing coordinate clicks. Use a fresh guided screenshot target." };
-            }
             const latest = getTask(id)?.lastObservation;
-            const screen = latest?.width && latest.height
-              ? { width: latest.width, height: latest.height }
-              : state.connection.screen;
-            const v = validateAction(act, { strict: !sim, screen });
+            const screen = latest?.width && latest.height ? { width: latest.width, height: latest.height } : undefined;
+            // No planner currently receives screenshot pixels; therefore no click has a
+            // visualGroundedObservationId and strict validation rejects it safely.
+            const v = validateAction(act, { strict: true, screen });
             return v.ok ? { ok: true } : { ok: false, reason: v.reason };
           },
           onBatchStart: (batchIndex, result) => {
@@ -558,12 +494,7 @@ async function tick(id: string) {
               currentStep: alreadyPresent ? (curT?.currentStep ?? 0) : existingSteps.length,
               approvedScope: approvedScopeFrom(combinedSteps, t.targetId),
             });
-            log(
-              id,
-              "info",
-              `Batch ${batchIndex} ready: ${batchSteps.length} step(s) (${combinedSteps.length} total)`,
-              sim,
-            );
+            log(id, "info", `Batch ${batchIndex} ready: ${batchSteps.length} step(s) (${combinedSteps.length} total)`);
           },
           onActionStart: (step, actionIndex) => {
             const act = (step as { action: ActionRequest }).action;
@@ -572,13 +503,13 @@ async function tick(id: string) {
               currentStep: actionIndex,
               verification: { status: "pending" },
             });
-            log(id, "action", `${tag} ${act.description}`, sim, !sim);
+            log(id, "action", `${tag} ${act.description}`, false, true);
           },
           executeAction: async (action) => {
             const act = action as ActionRequest;
             let result: ActionResult;
             let realObs: ObservationResult | undefined;
-            if (!sim && act.kind === "read_screen") {
+            if (act.kind === "read_screen") {
               realObs = await w.observe({ taskId: id, targetId: t.targetId, targetLabel: t.targetId });
               result = {
                 ok: true,
@@ -593,15 +524,12 @@ async function tick(id: string) {
               return { ok: false, error: result.message, message: result.message };
             }
 
-            const obs =
-              sim || !realObs
-                ? await w.observe({
-                    taskId: id,
-                    targetId: t.targetId,
-                    targetLabel: state.targets.find((x) => x.id === t.targetId)?.displayName ?? t.targetId,
-                    note: act.description,
-                  })
-                : realObs;
+            const obs = realObs ?? await w.observe({
+              taskId: id,
+              targetId: t.targetId,
+              targetLabel: state.targets.find((x) => x.id === t.targetId)?.displayName ?? t.targetId,
+              note: act.description,
+            });
 
             const curStep = getTask(id)?.steps.find((s) => s.action.description === act.description);
             const verification = verifyActionOutcome(
@@ -633,8 +561,8 @@ async function tick(id: string) {
               };
             }
 
-            if (state.settings.adaptiveChecks !== false && shouldCheckAfter(act.kind)) {
-              await checkAndAdapt(id, act, obs, sim);
+            if ((state.settings.adaptiveChecks !== false || act.kind === "launch_app") && shouldCheckAfter(act.kind)) {
+              await checkAndAdapt(id, act, obs);
             }
 
             return {
@@ -654,7 +582,7 @@ async function tick(id: string) {
               progress: Math.min(100, Math.round(((actionIndex + 1) / PLAN_MAX_TOTAL_STEPS) * 100)),
               currentAction: undefined,
             });
-            log(id, "result", `${sim ? "" : "[REAL] "}${actionResult.message ?? "Action complete"}`, sim, !sim);
+            log(id, "result", `[REAL] ${actionResult.message ?? "Action complete"}`, false, true);
           },
           observeDesktop: async () => {
             try {
@@ -707,17 +635,16 @@ async function tick(id: string) {
           isDeadlineExceeded: () => Boolean(t.deadlineAt && Date.now() >= t.deadlineAt),
           requiresApproval: (step) => {
             const s = step as PlannedStep;
-            if (!sim && !state.realActionsConfirmed) return true;
+            if (!state.realActionsConfirmed) return true;
             if (!getTask(id)?.planApproved && s.requiresApproval) return true;
             return false;
           },
           onApprovalRequired: async () => {
             transition(id, "waiting_for_approval");
-            log(id, "approval", "Approval required before action execution", sim);
+            log(id, "approval", "Approval required before action execution");
             return false;
           },
           isTaskComplete: (state, planResult) => {
-            if (sim) return true;
             return isTaskObjectiveComplete(
               planResult.summary,
               planResult.plan,
@@ -745,21 +672,13 @@ async function tick(id: string) {
         const tname = state.targets.find((x) => x.id === t.targetId)?.displayName ?? t.targetId;
         transition(id, "completed", {
           progress: 100,
-          summary: sim
-            ? `Completed ${orchestrationResult.totalActionsExecuted} simulated steps across ${orchestrationResult.batchesExecuted} batch(es) on ${tname}. Task objective achieved.`
-            : `Completed ${orchestrationResult.totalActionsExecuted} real worker steps across ${orchestrationResult.batchesExecuted} batch(es). Task objective achieved.`,
+          summary: `Completed ${orchestrationResult.totalActionsExecuted} authenticated worker steps across ${orchestrationResult.batchesExecuted} batch(es) on ${tname}. Task objective achieved.`,
         });
-        log(
-          id,
-          "result",
-          sim ? "Task completed (demo)" : "Task completed (real local worker)",
-          sim,
-          !sim,
-        );
+        log(id, "result", "Task completed (real local worker)", false, true);
         batchStates.delete(id);
       } else if (orchestrationResult.stoppedReason === "cancelled") {
         transition(id, "cancelled");
-        log(id, "warning", "Task was cancelled", sim);
+        log(id, "warning", "Task was cancelled");
         batchStates.delete(id);
       } else if (orchestrationResult.stoppedReason === "approval_required") {
         // Paused in waiting_for_approval; batchStates is retained for resumption when approved.
@@ -798,6 +717,10 @@ export const actions = {
   hydrate() {
     if (state.hydrated) return;
     const config = load<Pick<AppState, "providers" | "profiles" | "targets">>("config");
+    const savedTargets = config?.targets ?? DEFAULT_TARGETS;
+    const targets = savedTargets.some((target) => target.id === "desktop")
+      ? savedTargets
+      : [...DEFAULT_TARGETS.filter((target) => target.id === "desktop"), ...savedTargets];
     const savedProviders = config?.providers ?? DEFAULT_PROVIDERS;
     const providersWithGrok = savedProviders.some((provider) => provider.id === "grok")
       ? savedProviders
@@ -822,27 +745,30 @@ export const actions = {
     ];
     const tasks = load<Task[]>("tasks") ?? [];
     const activity = load<ActivityEvent[]>("activity") ?? [];
-    const settings = load<AppSettings & { emergencyStop?: boolean }>("settings");
-    // In-flight tasks cannot survive reload — pause them.
-    const restored = tasks.map((t) =>
-      ["queued", "planning", "running"].includes(t.status)
-        ? { ...t, status: "paused" as const }
-        : t,
-    );
+    const settings = load<AppSettings & { emergencyStop?: boolean; workerMode?: string }>("settings");
+    const previouslyDemo = !settings || settings.workerMode !== "real_local";
+    const simulatedTaskIds = new Set(activity.filter((event) => event.simulated && event.taskId).map((event) => event.taskId!));
+    // Never resume an in-flight task that may have used the old demo worker or planner.
+    const restored = tasks.map((task) => {
+      const withoutObservation = { ...task };
+      delete withoutObservation.lastObservation;
+      if (simulatedTaskIds.has(task.id) || (previouslyDemo && ["queued", "planning", "running", "waiting_for_approval"].includes(task.status)))
+        return { ...withoutObservation, status: "failed" as const, endedAt: Date.now(), error: "This task used the retired simulated path and was not run on the real desktop. Start a fresh task." };
+      if (["queued", "planning", "running"].includes(task.status))
+        return { ...withoutObservation, status: "paused" as const };
+      return task.lastObservation ? withoutObservation : task;
+    });
     state = {
       ...state,
       ...(config ?? {}),
       providers,
       profiles,
+      targets,
       tasks: restored,
       activity,
       settings: settings
         ? {
             ...DEFAULT_SETTINGS,
-            workerSimulation: settings.workerSimulation,
-            failureRate: settings.failureRate,
-            stepDelayMs: settings.stepDelayMs,
-            workerMode: settings.workerMode ?? "demo",
             workerPort: settings.workerPort ?? DEFAULT_SETTINGS.workerPort,
             adaptiveChecks: settings.adaptiveChecks ?? DEFAULT_SETTINGS.adaptiveChecks,
             aiMode: settings.aiMode ?? DEFAULT_SETTINGS.aiMode,
@@ -854,20 +780,17 @@ export const actions = {
     };
     listeners.forEach((l) => l());
     if (restored.some((t, i) => t.status !== tasks[i]?.status))
-      log(null, "warning", "Dashboard reloaded — in-flight tasks were paused");
+      log(null, "warning", "Dashboard reloaded — in-flight tasks were paused or safely stopped");
   },
 
   readiness(i: Omit<NewTaskInput, "description">) {
     return checkReadiness({
       ...i,
       ...state,
-      worker: state.settings.workerSimulation,
-      realWorker: isReal()
-        ? {
-            connected: state.connection.state === "connected" && !state.connection.stopped,
-            message: state.connection.message,
-          }
-        : undefined,
+      worker: {
+        connected: state.connection.state === "connected" && !state.connection.stopped,
+        message: state.connection.message,
+      },
     });
   },
 
@@ -935,9 +858,7 @@ export const actions = {
     const t = getTask(id);
     if (!t || t.status !== "paused") return [];
     if (state.emergencyStop) return ["Emergency stop is engaged"];
-    if (!isReal() && state.settings.workerSimulation === "disconnected")
-      return ["Worker is disconnected"];
-    if (isReal() && state.connection.state !== "connected")
+    if (state.connection.state !== "connected" || state.connection.stopped)
       return [`Real worker not connected: ${state.connection.message}`];
     transition(id, t.steps.length ? "running" : "queued");
     log(id, "info", "Resumed by user", false);
@@ -964,19 +885,16 @@ export const actions = {
     if (state.emergencyStop) {
       return { ok: false, message: "Emergency Stop is engaged. Reset it before approving this task." };
     }
-    if (isReal() && state.connection.state !== "connected") {
+    if (state.connection.state !== "connected" || state.connection.stopped) {
       return {
         ok: false,
         message: `Real worker is not connected: ${state.connection.message || state.connection.state}. Reconnect it, then approve again.`,
       };
     }
-    if (!isReal() && state.settings.workerSimulation === "disconnected") {
-      return { ok: false, message: "Demo worker is disconnected. Reconnect it, then approve again." };
-    }
     if (!canTransition(t.status, "running")) {
       return { ok: false, message: "Task cannot transition to running from its current state." };
     }
-    if (isReal()) set({ realActionsConfirmed: true });
+    set({ realActionsConfirmed: true });
     patchTask(id, {
       planApproved: true,
       steps: t.steps.map((s) => ({ ...s, approved: true, requiresApproval: false })),
@@ -1022,17 +940,16 @@ export const actions = {
     timers.forEach((h) => clearTimeout(h));
     timers.clear();
     set({ emergencyStop: true });
-    // Always tell the real worker to stop too (no token needed), even in DEMO mode in case it's running.
+    // The worker's STOP endpoint remains available even when the session token is missing.
     void localWorker.stop().then(
       () => log(null, "safety", "Local worker acknowledged STOP", false),
       () =>
-        isReal() &&
-        log(
-          null,
-          "warning",
-          "Could not reach the local worker to send STOP — use Ctrl+C in its PowerShell window",
-          false,
-        ),
+      log(
+        null,
+        "warning",
+        "Could not reach the local worker to send STOP — use Ctrl+C in its PowerShell window",
+        false,
+      ),
     );
     state.tasks
       .filter((t) => isActive(t.status))
@@ -1042,7 +959,7 @@ export const actions = {
 
   resetEmergencyStop() {
     set({ emergencyStop: false });
-    if (isReal() && readSession())
+    if (readSession())
       void localWorker
         .resume()
         .catch(() => undefined)
@@ -1052,12 +969,6 @@ export const actions = {
 
   updateSettings(p: Partial<AppSettings>) {
     set((s) => ({ settings: { ...s.settings, ...p } }));
-    if (p.workerSimulation)
-      log(
-        null,
-        p.workerSimulation === "connected" ? "info" : "warning",
-        `Mock worker ${p.workerSimulation} (simulated)`,
-      );
   },
 
   upsertProvider(p: Provider, originalId?: string) {
@@ -1080,21 +991,9 @@ export const actions = {
   },
 
   async refreshConnection() {
-    if (!isReal()) {
-      const c = state.settings.workerSimulation === "connected";
-      set({
-        connection: {
-          state: c ? "connected" : "disconnected",
-          message: c ? "Demo worker (simulated)" : "Demo worker disconnected (simulated)",
-          checkedAt: Date.now(),
-        },
-      });
-      return;
-    }
     if (state.connection.state === "pairing") return;
     try {
       const s = await localWorker.getStatus();
-      if (!isReal()) return;
       set({
         connection: {
           state: s.connection === "pairing" ? "pairing" : s.connection,
@@ -1106,7 +1005,6 @@ export const actions = {
         },
       });
     } catch (e) {
-      if (!isReal()) return;
       set({
         connection: {
           state: "error",
@@ -1144,20 +1042,6 @@ export const actions = {
     void actions.refreshConnection();
   },
 
-  setWorkerMode(mode: WorkerSelection): string | null {
-    if (state.tasks.some((t) => isActive(t.status)))
-      return "Finish or cancel the active task before switching worker mode.";
-    set((s) => ({ settings: { ...s.settings, workerMode: mode }, realActionsConfirmed: false }));
-    log(
-      null,
-      "info",
-      mode === "demo" ? "Switched to DEMO mode (simulated worker)" : "Switched to REAL LOCAL mode",
-      false,
-    );
-    void actions.refreshConnection();
-    return null;
-  },
-
   setWorkerPort(port: number): string | null {
     if (!Number.isInteger(port) || port < 1024 || port > 65535) return "Port must be 1024–65535";
     set((s) => ({ settings: { ...s.settings, workerPort: port } }));
@@ -1175,7 +1059,6 @@ export const actions = {
     a: ActionRequest,
     screen?: { width: number; height: number },
   ): Promise<ActionResult> {
-    if (!isReal()) throw new Error("Switch to REAL LOCAL mode first.");
     if (state.emergencyStop) throw new Error("Emergency stop is engaged.");
     if (!state.realActionsConfirmed) throw new Error("Confirm real desktop actions first.");
     const v = validateAction(a, { strict: true, screen });
@@ -1195,7 +1078,6 @@ export const actions = {
   },
 
   async realObserve(): Promise<ObservationResult> {
-    if (!isReal()) throw new Error("Switch to REAL LOCAL mode first.");
     if (state.emergencyStop) throw new Error("Emergency stop is engaged.");
     if (!state.realActionsConfirmed) throw new Error("Confirm real desktop actions first.");
     const o = await localWorker.observe({

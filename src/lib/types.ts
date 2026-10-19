@@ -170,19 +170,11 @@ export interface Task {
   };
 }
 
-export type WorkerSimulation = "connected" | "disconnected";
-/** Which DesktopWorker implementation the dashboard uses. */
-export type WorkerSelection = "demo" | "real_local";
-
 export interface AppSettings {
-  workerSimulation: WorkerSimulation;
-  failureRate: number; // 0-0.5 chance a simulated action fails
-  stepDelayMs: number;
-  workerMode: WorkerSelection;
   workerPort: number;
   /** Module 4: check the screen after each step and adjust the plan if needed. */
   adaptiveChecks: boolean;
-  /** AI routing: auto (Gemini, local fallback), gemini only, or local only. */
+  /** AI routing mode used by the selected provider. */
   aiMode: "auto" | "gemini" | "local";
   /** Base URL of the local llama.cpp server on the user's PC. */
   localBaseUrl: string;

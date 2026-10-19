@@ -12,9 +12,7 @@ import { useEffect, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
-import { SidebarProvider } from "@/components/ui/sidebar";
 import { Toaster } from "@/components/ui/sonner";
-import { AppSidebar } from "@/components/app-sidebar";
 import { AppHeader } from "@/components/app-header";
 import { actions } from "@/store/app-store";
 
@@ -28,7 +26,7 @@ function NotFoundComponent() {
           to="/"
           className="mt-6 inline-flex rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground"
         >
-          Back to dashboard
+          Back to Main
         </Link>
       </div>
     </div>
@@ -118,17 +116,12 @@ function RootComponent() {
   }, []);
   return (
     <QueryClientProvider client={queryClient}>
-      <SidebarProvider>
-        <div className="flex min-h-screen w-full">
-          <AppSidebar />
-          <div className="flex min-w-0 flex-1 flex-col">
-            <AppHeader />
-            <main className="flex-1 p-4 md:p-6">
-              <Outlet />
-            </main>
-          </div>
-        </div>
-      </SidebarProvider>
+      <div className="min-h-screen">
+        <AppHeader />
+        <main className="mx-auto w-full max-w-5xl p-4 md:p-8">
+          <Outlet />
+        </main>
+      </div>
       <Toaster theme="dark" position="bottom-right" />
     </QueryClientProvider>
   );

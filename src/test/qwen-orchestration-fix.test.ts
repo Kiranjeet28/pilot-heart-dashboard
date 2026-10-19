@@ -499,15 +499,14 @@ describe("DesktopPilot — Qwen Invalid Plans and Orchestration Fixes (13 Requir
     if (!createResult.ok) return;
 
     const taskId = createResult.id;
-    // Starting once succeeds; subsequent start attempts are rejected as already active.
-    expect(actions.start(taskId)).toEqual([]);
-    expect(actions.start(taskId)).toContain("Task is already active");
-    expect(actions.start(taskId)).toContain("Task is already active");
+    // Offline workers block every start attempt; no simulated fallback is permitted.
+    expect(actions.start(taskId).join(" ")).toContain("Real worker not connected");
+    expect(actions.start(taskId).join(" ")).toContain("Real worker not connected");
 
     const task = store.get().tasks.find((t) => t.id === taskId);
     expect(task).toBeDefined();
-    // Status is safely transitioned without multiple concurrent queues
-    expect(["queued", "planning", "running"]).toContain(task?.status);
+    // Repeated start attempts do not bypass readiness or transition the draft.
+    expect(task?.status).toBe("draft");
   });
 
   // Test 11: Two simultaneous tick() calls cannot execute the same task concurrently (single-flight guard)

@@ -30,9 +30,17 @@ describe("Qwen click grounding and approved launch", () => {
   });
 
   it("rejects negative and out-of-screen coordinates and accepts valid grounded bounds", () => {
-    expect(validateAction(click(-1, 2), { screen: { width: 100, height: 80 } }).ok).toBe(false);
-    expect(validateAction(click(100, 2), { screen: { width: 100, height: 80 } }).ok).toBe(false);
-    expect(validateAction(click(99, 79), { screen: { width: 100, height: 80 } }).ok).toBe(true);
+    const grounded = { screen: { width: 100, height: 80 }, strict: true, visualGroundedObservationId: "shot-1" };
+    expect(validateAction(click(-1, 2), grounded).ok).toBe(false);
+    expect(validateAction(click(100, 2), grounded).ok).toBe(false);
+    expect(validateAction(click(99, 79), grounded).ok).toBe(false);
+    expect(validateAction({ ...click(99, 79), observationId: "shot-1" }, grounded).ok).toBe(true);
+  });
+
+  it("rejects coordinates when no screenshot was supplied to ground the planner", () => {
+    expect(validateAction({ ...click(20, 30), observationId: "invented" }, {
+      screen: { width: 100, height: 80 }, strict: true,
+    })).toMatchObject({ ok: false, reason: expect.stringContaining("grounded in the latest screenshot") });
   });
 
   it("does not require click coordinates for other action types", () => {

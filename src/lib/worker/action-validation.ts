@@ -15,7 +15,7 @@ const ALLOWED: readonly ActionKind[] = [
   "copy_selection",
   "paste",
 ];
-const MAX_TEXT = 2000; // demo-mode limit for type_text
+const MAX_TEXT = 2000; // Compatibility limit for non-strict validation callers.
 
 const PRINTABLE = /^[\x20-\x7E\n]*$/;
 
@@ -25,7 +25,9 @@ export type ValidationResult =
 export interface ValidationContext {
   /** Current screen size from a fresh observation; enables bounds checks. */
   screen?: { width: number; height: number } | undefined;
-  /** Real-worker mode applies stricter text rules matching the Python schema. */
+  /** Observation the planner actually saw; a matching ID is required for coordinate execution. */
+  visualGroundedObservationId?: string | undefined;
+  /** Applies the worker's strict text rules matching the Python schema. */
   strict?: boolean | undefined;
 }
 
@@ -62,8 +64,10 @@ export function validateAction(a: ActionRequest, ctx: ValidationContext = {}): V
         ok: false,
         reason: `Coordinates (${a.x}, ${a.y}) are outside the ${ctx.screen.width}×${ctx.screen.height} screen`,
       };
-    if (ctx.strict && !a.observationId)
-      return { ok: false, reason: "click requires a fresh observation" };
+    if (ctx.strict && !ctx.screen)
+      return { ok: false, reason: "click requires dimensions from a fresh screenshot" };
+    if (ctx.strict && (!ctx.visualGroundedObservationId || a.observationId !== ctx.visualGroundedObservationId))
+      return { ok: false, reason: "click requires coordinates grounded in the latest screenshot; do not guess coordinates" };
   }
   if (a.kind === "key_press") {
     if (!a.keys) return { ok: false, reason: "key_press requires keys" };

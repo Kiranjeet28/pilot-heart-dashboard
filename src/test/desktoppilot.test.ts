@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { canTransition } from "@/lib/tasks/state-machine";
 import { validateAction } from "@/lib/worker/action-validation";
-import { MockDesktopWorker } from "@/lib/worker/mock-worker";
+import { MockDesktopWorker } from "@/test/helpers/mock-worker";
 import { checkReadiness } from "@/lib/safety/readiness";
 import { DEFAULT_PROFILES, DEFAULT_PROVIDERS, DEFAULT_TARGETS } from "@/lib/registry/defaults";
 
@@ -31,7 +31,7 @@ describe("action validation", () => {
 describe("mock worker", () => {
   it("marks every result as simulated", async () => {
     const w = new MockDesktopWorker({ isConnected: () => true, failureRate: () => 0 });
-    const v = validateAction({ kind: "focus_window", targetId: "vscode", description: "x" });
+    const v = validateAction({ kind: "read_screen", targetId: "vscode", description: "x" });
     if (!v.ok) throw new Error();
     expect((await w.executeAction("t", v.action)).simulated).toBe(true);
   });
@@ -51,7 +51,7 @@ describe("readiness", () => {
     targets: DEFAULT_TARGETS,
     tasks: [],
     emergencyStop: false,
-    worker: "connected" as const,
+    worker: { connected: true, message: "ok" },
   };
   it("ready with valid config", () => expect(checkReadiness(base)).toEqual([]));
   it("blocked by emergency stop", () =>

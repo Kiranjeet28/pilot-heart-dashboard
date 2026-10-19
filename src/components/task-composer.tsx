@@ -1,171 +1,129 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { AlertTriangle, Play, Save } from "lucide-react";
-import { toast } from "sonner";
+import { useEffect, useRef, useState } from "react";
+import { AlertTriangle, Play } from "lucide-react";
 import { actions, useAppState } from "@/store/app-store";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Panel } from "./panel";
 
-export function TaskComposer() {
-  const providers = useAppState((s) => s.providers);
-  const profiles = useAppState((s) => s.profiles);
-  const targets = useAppState((s) => s.targets);
-  useAppState((s) => s.tasks); // re-evaluate readiness on task changes
-  useAppState((s) => s.emergencyStop);
-  const mode = useAppState((s) => s.settings.workerMode);
-  useAppState((s) => s.connection);
+const PROVIDER_LABELS: Record<string, string> = {
+  qwen: "Local Model",
+  gemini: "Gemini",
+  grok: "Grok",
+};
+const MAIN_PROVIDER_IDS = ["qwen", "gemini", "grok"];
 
+export function TaskComposer() {
+  const providers = useAppState((state) => state.providers);
+  const profiles = useAppState((state) => state.profiles);
+  const targets = useAppState((state) => state.targets);
+  const emergencyStop = useAppState((state) => state.emergencyStop);
+  const connection = useAppState((state) => state.connection);
+  useAppState((state) => state.tasks);
   const [description, setDescription] = useState("");
   const [providerId, setProviderId] = useState("");
-  const [profileId, setProfileId] = useState("");
-  const [targetId, setTargetId] = useState("");
-  const [issues, setIssues] = useState<string[]>([]);
+  const [error, setError] = useState("");
+  const submitting = useRef(false);
 
+  const availableProviders = providers.filter((provider) => MAIN_PROVIDER_IDS.includes(provider.id));
   useEffect(() => {
-    if (!providerId && providers.length)
-      setProviderId(
-        providers.find((p) => p.id === "gemini" && p.enabled)?.id ??
-          providers.find((p) => p.enabled)?.id ??
-          providers[0]!.id,
-      );
-    if (!targetId && targets.length) setTargetId(targets[0]!.id);
-  }, [providers, targets, providerId, targetId]);
-
-  const providerProfiles = profiles.filter((p) => p.providerId === providerId);
-  useEffect(() => {
-    if (!providerProfiles.some((p) => p.id === profileId))
-      setProfileId(providerProfiles[0]?.id ?? "");
-  }, [providerId, profiles]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const live = actions.readiness({ providerId, profileId, targetId });
-
-  function submit(start: boolean) {
-    const r = actions.createTask({ description, providerId, profileId, targetId }, start);
-    if (!r.ok) {
-      setIssues(r.issues);
-      return;
+    if (!availableProviders.some((provider) => provider.id === providerId)) {
+      const preferred = availableProviders.find((provider) => provider.id === "gemini" && provider.enabled)
+        ?? availableProviders.find((provider) => provider.id === "qwen" && provider.enabled)
+        ?? availableProviders.find((provider) => provider.enabled)
+        ?? availableProviders[0];
+      if (preferred) setProviderId(preferred.id);
     }
-    setIssues([]);
-    setDescription("");
-    toast.success(
-      start
-        ? mode === "demo"
-          ? "Task started in demo mode"
-          : "Task started on the real local worker"
-        : "Draft saved",
-    );
+  }, [availableProviders, providerId]);
+
+  const provider = availableProviders.find((item) => item.id === providerId);
+  const profile = profiles.find((item) => item.providerId === providerId);
+  const targetId = targets.find((target) => target.id === "desktop")?.id ?? targets[0]?.id ?? "";
+  const readiness = actions.readiness({ providerId, profileId: profile?.id ?? "", targetId });
+  const connected = connection.state === "connected" && !connection.stopped;
+
+  function submit() {
+    if (submitting.current) return;
+    submitting.current = true;
+    setError("");
+    try {
+      if (!description.trim()) {
+        setError("Describe the task before running it.");
+        return;
+      }
+      if (!provider || !profile || !targetId) {
+        setError("The selected provider or desktop target is not configured. Check Settings.");
+        return;
+      }
+      const result = actions.createTask(
+        { description, providerId, profileId: profile.id, targetId },
+        true,
+      );
+      if (!result.ok) {
+        setError(result.issues[0] ?? "The task could not be started.");
+        return;
+      }
+      setDescription("");
+    } finally {
+      submitting.current = false;
+    }
   }
 
   return (
-    <Panel title="New task">
-      <div className="space-y-3">
-        <Textarea
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="Describe what DesktopPilot should do, e.g. “Open the README in VS Code and ask the assistant to summarise it.”"
-          className="min-h-28 resize-y font-mono text-sm"
-          maxLength={4000}
-        />
-        <div className="grid gap-3 sm:grid-cols-3">
-          <Field label="Provider">
-            <Select value={providerId} onValueChange={setProviderId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select provider" />
-              </SelectTrigger>
-              <SelectContent>
-                {providers.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.displayName}
-                    {p.enabled ? "" : " (disabled)"}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-          <Field label="Profile">
-            <Select
-              value={profileId}
-              onValueChange={setProfileId}
-              disabled={!providerProfiles.length}
-            >
-              <SelectTrigger>
-                <SelectValue
-                  placeholder={
-                    providerProfiles.length ? "Select profile" : "No profile for provider"
-                  }
-                />
-              </SelectTrigger>
-              <SelectContent>
-                {providerProfiles.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-          <Field label="Desktop target">
-            <Select value={targetId} onValueChange={setTargetId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Select target" />
-              </SelectTrigger>
-              <SelectContent>
-                {targets.map((t) => (
-                  <SelectItem key={t.id} value={t.id}>
-                    {t.displayName}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-        </div>
-
-        {(issues.length ? issues : live).length ? (
-          <ul className="space-y-1 rounded-md border border-warning/30 bg-warning/5 p-2.5">
-            {(issues.length ? issues : live).map((i) => (
-              <li key={i} className="flex items-start gap-2 text-xs text-warning">
-                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                {i}
-              </li>
-            ))}
-          </ul>
-        ) : null}
-
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p className="font-mono text-[11px] text-muted-foreground">
-            {mode === "demo"
-              ? "Runs against the mock worker. No real desktop actions."
-              : "REAL LOCAL: tasks only capture screenshots of your desktop in this milestone."}
+    <Panel title="Run a task">
+      <div className="space-y-4">
+        <div className="space-y-2">
+          <Label htmlFor="task-description">Task</Label>
+          <Textarea
+            id="task-description"
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            placeholder="Describe what you want your computer to do..."
+            className="min-h-36 resize-y text-base"
+            maxLength={4000}
+            aria-describedby="task-help"
+          />
+          <p id="task-help" className="text-xs text-muted-foreground">
+            The complete plan is shown for your approval before any desktop action runs.
           </p>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => submit(false)}>
-              <Save className="h-4 w-4" /> Save draft
-            </Button>
-            <Button onClick={() => submit(true)} disabled={live.length > 0}>
-              <Play className="h-4 w-4" /> Start Task
-            </Button>
-          </div>
         </div>
+
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+          <div className="w-full max-w-sm space-y-2">
+            <Label htmlFor="task-provider">AI model</Label>
+            <Select value={providerId} onValueChange={setProviderId}>
+              <SelectTrigger id="task-provider" aria-label="AI model provider">
+                <SelectValue placeholder="Select a model" />
+              </SelectTrigger>
+              <SelectContent>
+                {availableProviders.map((item) => (
+                  <SelectItem key={item.id} value={item.id} disabled={!item.enabled}>
+                    {PROVIDER_LABELS[item.id]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <Button onClick={submit} disabled={!connected || emergencyStop || readiness.length > 0}>
+            <Play className="h-4 w-4" /> Run Task
+          </Button>
+        </div>
+
+        {!connected ? (
+          <p className="text-sm text-warning" role="status">
+            Worker is {connection.stopped ? "stopped" : "disconnected"}. Connect and pair it in Settings before running a task.
+          </p>
+        ) : null}
+        {readiness.length > 0 && connected ? (
+          <p className="text-sm text-warning" role="status">{readiness[0]}</p>
+        ) : null}
+        {error ? (
+          <p className="flex items-start gap-2 rounded border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive" role="alert">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> {error}
+          </p>
+        ) : null}
       </div>
     </Panel>
-  );
-}
-
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="space-y-1.5">
-      <Label className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
-        {label}
-      </Label>
-      {children}
-    </div>
   );
 }
