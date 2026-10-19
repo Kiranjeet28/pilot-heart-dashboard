@@ -126,6 +126,17 @@ def test_rejects_non_allowlisted_actions(env):
     assert act(client, auth, {"kind": "wait", "duration_ms": 60000}).status_code == 422
 
 
+def test_key_shortcut_spacing_is_canonicalized_without_expanding_allowlist(env):
+    client, ex, pairing = env
+    auth = pair(client, pairing)
+    response = act(client, auth, {"kind": "key_press", "keys": " Ctrl + A "})
+    assert response.status_code == 200
+    assert ("press", "ctrl+a") in ex.calls
+    rejected = act(client, auth, {"kind": "key_press", "keys": "ctrl + shift + s"})
+    assert rejected.status_code == 422
+    assert "ctrl + shift + s" in rejected.json()["errors"][0]["msg"]
+
+
 def test_click_requires_fresh_observation_and_bounds(env):
     client, ex, pairing = env
     auth = pair(client, pairing)

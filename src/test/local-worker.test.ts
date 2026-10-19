@@ -112,6 +112,9 @@ describe("strict (real worker) validation", () => {
     expect(
       validateAction({ ...base, kind: "key_press", keys: "ctrl+a" }, { strict: true }).ok,
     ).toBe(true);
+    expect(
+      validateAction({ ...base, kind: "key_press", keys: "ctrl+," }, { strict: true }).ok,
+    ).toBe(true);
   });
   it("rejects clicks outside the observed screen", () => {
     expect(

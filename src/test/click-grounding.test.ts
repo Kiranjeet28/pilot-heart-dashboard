@@ -44,9 +44,9 @@ describe("Qwen click grounding and approved launch", () => {
 
   it("exposes only approved Notepad launch as a non-coordinate option for open notepad", () => {
     expect(LOCAL_SYSTEM).toContain("launch_app supports only app=notepad");
-    expect(PLAN_JSON_SCHEMA.properties.steps.items.properties.action.properties.app.enum).toEqual(["notepad"]);
+    expect(PLAN_JSON_SCHEMA.properties.steps.items.properties.action.properties.kind.enum).toContain("launch_app");
     expect(normalizeProviderResponse({
-      steps: [{ action: { kind: "launch_app", app: "notepad", targetId: "desktop", description: "Open Notepad" } }],
+      steps: [{ action: { kind: "launch_app", targetId: "desktop", description: "Open Notepad" } }],
     }).steps[0]?.action).toMatchObject({ kind: "launch_app", app: "notepad" });
   });
 
@@ -62,7 +62,7 @@ describe("Qwen click grounding and approved launch", () => {
     const fetchMock = vi.fn(async () => streamPlan({
       summary: "Notepad is open",
       plan: ["Launch Notepad"],
-      steps: [{ action: { kind: "launch_app", app: "notepad", targetId: "desktop", description: "Open Notepad" }, requiresApproval: false }],
+      steps: [{ action: { kind: "launch_app", targetId: "desktop", description: "Open Notepad" }, requiresApproval: false }],
     }));
     vi.stubGlobal("fetch", fetchMock);
     const result = await callLocal({ userRequest: "open notepad", provider: DEFAULT_PROVIDERS[0]! });

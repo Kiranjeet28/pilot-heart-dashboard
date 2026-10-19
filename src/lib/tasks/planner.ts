@@ -98,7 +98,10 @@ function normalizeKeyAction(action: ProviderResult["steps"][number]["action"]) {
   if (action.kind !== "key_press" || !action.keys) return action;
   const keys = action.keys
     .split("+")
-    .map((part) => (part.trim().toLowerCase() === "win" ? "windows" : part))
+    .map((part) => {
+      const key = part.trim().toLowerCase();
+      return key === "win" ? "windows" : key;
+    })
     .join("+");
   return { ...action, keys };
 }
@@ -127,9 +130,8 @@ export function normalizeProviderPlan(
     if (target.interactionMode === "observe_only" && INPUT_ACTIONS.includes(action.kind))
       throw new Error(`Target "${target.displayName}" only permits observation.`);
     const validation = validateAction(action);
-    if (!validation.ok && !supportedActions?.includes(action.kind)) throw new Error(
-      `Plan step ${index + 1} uses unsupported worker action "${action.kind}". Supported: ${supportedActions?.join(", ")}`
-    );
+    if (!validation.ok)
+      throw new Error(`Plan step ${index + 1} is invalid: ${validation.reason}`);
 
     const policyRequiresApproval =
       target.interactionMode !== "autonomous" && INPUT_ACTIONS.includes(action.kind);

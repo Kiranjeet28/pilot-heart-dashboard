@@ -31,7 +31,11 @@ export function TaskComposer() {
 
   useEffect(() => {
     if (!providerId && providers.length)
-      setProviderId(providers.find((p) => p.enabled)?.id ?? providers[0]!.id);
+      setProviderId(
+        providers.find((p) => p.id === "gemini" && p.enabled)?.id ??
+          providers.find((p) => p.enabled)?.id ??
+          providers[0]!.id,
+      );
     if (!targetId && targets.length) setTargetId(targets[0]!.id);
   }, [providers, targets, providerId, targetId]);
 

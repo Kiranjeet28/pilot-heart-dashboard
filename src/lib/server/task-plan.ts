@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { jsonrepair } from "jsonrepair";
 import { normalizeProviderResponse, type ProviderResult } from "@/lib/ai/provider";
 import {
   PLAN_JSON_SCHEMA,
@@ -120,6 +121,23 @@ function extractJsonObject(raw: string): string {
   return match ? match[0] : block;
 }
 
+export function parseGeminiPlanText(text: string): ProviderResult {
+  const candidate = extractJsonObject(text);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(candidate);
+  } catch (firstError) {
+    try {
+      parsed = JSON.parse(jsonrepair(candidate));
+    } catch {
+      throw new Error(
+        firstError instanceof Error ? `Gemini returned malformed plan JSON: ${firstError.message}` : "Gemini returned malformed plan JSON.",
+      );
+    }
+  }
+  return normalizeProviderResponse(parsed);
+}
+
 /**
  * Strip additionalProperties from JSON schemas if needed.
  */
@@ -128,7 +146,7 @@ export function toGeminiResponseSchema(schema: unknown): unknown {
   if (schema && typeof schema === "object") {
     const out: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(schema as Record<string, unknown>)) {
-      if (key === "additionalProperties" || key === "maxItems") continue;
+      if (key === "additionalProperties" || key === "maxItems" || key === "allOf") continue;
       out[key] = toGeminiResponseSchema(value);
     }
     return out;
@@ -136,13 +154,94 @@ export function toGeminiResponseSchema(schema: unknown): unknown {
   return schema;
 }
 
-/**
- * Local-only task planning.
- * Routes directly to local llama-server running model alias "qwen".
- * Never calls Gemini or Lovable AI Gateway.
- */
+async function generateGeminiTaskPlan(input: TaskPlanRequestInput): Promise<ProviderResult> {
+  const key = process.env["GEMINI_API_KEY"]?.trim();
+  if (!key) {
+    throw Object.assign(new Error("Gemini is selected but GEMINI_API_KEY is not configured on the server."), {
+      code: "missing_credentials",
+      status: 503,
+    });
+  }
+
+  const configuredModel = process.env["GEMINI_MODEL"]?.trim() || "gemini-3.8-flash";
+  const requestedModel = input.modelOverride?.trim();
+  const model =
+    requestedModel && requestedModel !== "gemini-2.5-flash" ? requestedModel : configuredModel;
+  if (!/^gemini-[a-zA-Z0-9.-]+$/.test(model)) {
+    throw Object.assign(new Error("The selected Gemini model name is invalid."), {
+      code: "invalid_request",
+      status: 400,
+    });
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), input.timeoutMs ?? 300000);
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+      {
+        method: "POST",
+        signal: controller.signal,
+        headers: { "content-type": "application/json", "x-goog-api-key": key },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: LOCAL_SYSTEM }] },
+          contents: [{ role: "user", parts: [{ text: buildPrompt(input) }] }],
+          generationConfig: {
+            maxOutputTokens: 1200,
+            responseMimeType: "application/json",
+            responseSchema: toGeminiResponseSchema(PLAN_JSON_SCHEMA),
+            thinkingConfig: { thinkingLevel: "low" },
+          },
+        }),
+      },
+    );
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      const status = response.status === 429 ? 429 : response.status === 401 || response.status === 403 ? 502 : 502;
+      throw Object.assign(new Error(`Gemini planning failed (HTTP ${response.status}). ${detail.slice(0, 300)}`), {
+        code: response.status === 429 ? "rate_limit" : "gemini_error",
+        status,
+      });
+    }
+    const data = (await response.json()) as {
+      candidates?: Array<{
+        finishReason?: string;
+        content?: { parts?: Array<{ text?: string }> };
+      }>;
+    };
+    const candidate = data.candidates?.[0];
+    if (candidate?.finishReason === "MAX_TOKENS") {
+      throw Object.assign(new Error("Gemini plan reached the output limit; no partial plan was accepted."), {
+        code: "invalid_response",
+        status: 502,
+      });
+    }
+    const text = candidate?.content?.parts?.map((part) => part.text ?? "").join("") ?? "";
+    if (!text.trim()) {
+      throw Object.assign(new Error("Gemini returned an empty plan."), { code: "invalid_response", status: 502 });
+    }
+    try {
+      return parseGeminiPlanText(text);
+    } catch (error) {
+      throw Object.assign(new Error(error instanceof Error ? error.message : "Gemini returned an invalid plan."), {
+        code: "invalid_response",
+        status: 502,
+      });
+    }
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error) throw error;
+    if (controller.signal.aborted) {
+      throw Object.assign(new Error("Gemini planning request timed out."), { code: "timeout", status: 504 });
+    }
+    throw Object.assign(new Error("Could not reach the Gemini planning service."), { code: "network_error", status: 502 });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Selects the server-side Gemini route or the local llama-server route. */
 
 export async function generateTaskPlan(input: TaskPlanRequestInput): Promise<ProviderResult> {
+  if (input.providerId === "gemini") return generateGeminiTaskPlan(input);
   const rawBase = "http://127.0.0.1:8081";
   const baseUrl = rawBase.replace(/\/+$/, "");
   const endpoint = baseUrl.endsWith("/v1")
@@ -461,9 +560,6 @@ export async function generateTaskPlan(input: TaskPlanRequestInput): Promise<Pro
     );
   }
 }
-
-/** Backwards-compatible export for any callers of generateGeminiTaskPlan. */
-export const generateGeminiTaskPlan = generateTaskPlan;
 
 export async function handleTaskPlanRequest(request: Request): Promise<Response> {
   if (request.method !== "POST") {

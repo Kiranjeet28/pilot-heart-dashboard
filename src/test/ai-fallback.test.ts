@@ -121,7 +121,7 @@ describe("Local-only Qwen planning (Acceptance Criteria 1-10)", () => {
   it("3. Gemini environment variables and stale provider settings cannot change the planning route", async () => {
     vi.stubEnv("GEMINI_API_KEY", "fake-gemini-key");
     vi.stubEnv("LOVABLE_API_KEY", "fake-gateway-key");
-    vi.stubEnv("GEMINI_MODEL", "gemini-2.5-flash");
+    vi.stubEnv("GEMINI_MODEL", "gemini-3.8-flash");
 
     // Stale mode "gemini" or "auto" in settings
     mode = "auto";
@@ -132,7 +132,7 @@ describe("Local-only Qwen planning (Acceptance Criteria 1-10)", () => {
         displayName: "Google Gemini",
         type: "gemini",
         connectionMethod: "api_key",
-        model: "gemini-2.5-flash",
+        model: "gemini-3.8-flash",
         enabled: true,
         connectionStatus: "configured_unverified",
       },

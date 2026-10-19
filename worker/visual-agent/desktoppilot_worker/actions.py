@@ -14,7 +14,7 @@ ALLOWED_KEYS = frozenset(
     {
         "enter", "tab", "escape", "backspace", "delete", "space",
         "up", "down", "left", "right", "home", "end", "pageup", "pagedown",
-        "ctrl+a", "ctrl+c", "ctrl+v", "ctrl+z", "shift+home", "shift+end",
+        "ctrl+a", "ctrl+c", "ctrl+v", "ctrl+z", "ctrl+,", "shift+home", "shift+end",
         "windows", "windows+r", "windows+e", "windows+d",
     }
 )
@@ -59,9 +59,13 @@ class KeyPressAction(_Strict):
     @field_validator("keys")
     @classmethod
     def _allow(cls, v: str) -> str:
-        k = v.strip().lower()
+        # Models commonly emit harmless spacing such as "Ctrl + A". Canonicalize
+        # separators and modifier casing, but never expand the shortcut allowlist.
+        parts = [part.strip().lower() for part in v.split("+")]
+        parts = ["windows" if part == "win" else part for part in parts]
+        k = "+".join(parts)
         if k not in ALLOWED_KEYS:
-            raise ValueError("key or shortcut is not on the allowlist")
+            raise ValueError(f"key or shortcut {v[:32]!r} is not on the allowlist")
         return k
 
 

@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { jsonrepair } from "jsonrepair";
 import {
   normalizeProviderResponse,
+  GeminiProvider,
   type AIProviderResult,
   type AIRequest,
   type ProviderAdapter,
@@ -692,6 +693,30 @@ async function localOnce(
     }
   }
 
+  const rawPlan = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
+  const rawSteps = Array.isArray(rawPlan["steps"]) ? rawPlan["steps"] : [];
+  const containsClick =
+    (rawPlan["nextAction"] !== null &&
+      typeof rawPlan["nextAction"] === "object" &&
+      (rawPlan["nextAction"] as Record<string, unknown>)["kind"] === "click") ||
+    rawSteps.some((step) => {
+      if (!step || typeof step !== "object") return false;
+      const row = step as Record<string, unknown>;
+      const action = row["action"] && typeof row["action"] === "object"
+        ? (row["action"] as Record<string, unknown>)
+        : row;
+      return action["kind"] === "click";
+    });
+  if (containsClick) {
+    return {
+      result: fail(
+        "invalid_response",
+        "Local Qwen has no visual grounding and cannot plan clicks. Capture a fresh screenshot and use a visually grounded planner, or clarify a supported non-click action.",
+      ),
+      ...meta,
+    };
+  }
+
   try {
     const result = normalizeProviderResponse(parsed);
     logInferenceTiming({
@@ -760,6 +785,7 @@ export async function callLocal(
         !/click requires x and y|do not guess coordinates/i.test(a.result.message) &&
         a.result.message !== TOO_LARGE_MESSAGE &&
         a.result.message !== TRUNCATED_MESSAGE &&
+        !/no visual grounding|cannot plan clicks/i.test(a.result.message) &&
         !isUserAbort(signal)
       ) {
         a = await localOnce(
@@ -806,7 +832,7 @@ export async function callLocal(
 
 /** Legacy provider adapter call: routes directly to local Qwen. */
 export async function callGemini(request: AIRequest): Promise<AIProviderResult> {
-  return callLocal(request);
+  return new GeminiProvider().getNextStep(request);
 }
 
 /**
@@ -847,10 +873,13 @@ export function shouldSkipGeminiCheck(): boolean {
  * Always delegates to local Qwen.
  */
 export function routedProvider(
-  _provider: Provider,
+  provider: Provider,
   _profile?: AccountProfile,
   signal?: AbortSignal,
 ): ProviderAdapter {
+  if (provider.id === "gemini" || provider.type === "gemini") {
+    return new GeminiProvider();
+  }
   return {
     name: "Local Qwen",
     type: "custom",

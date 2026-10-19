@@ -71,7 +71,7 @@ function parseModelText(text: string): StepCheckResult {
   return r;
 }
 
-const model = () => (process.env["GEMINI_MODEL"] ?? "gemini-2.5-flash").trim();
+const model = () => (process.env["GEMINI_MODEL"] ?? "gemini-3.8-flash").trim();
 
 async function viaGateway(i: StepCheckInput, key: string, signal: AbortSignal) {
   const m = model();
@@ -131,9 +131,8 @@ async function viaDirect(i: StepCheckInput, signal: AbortSignal) {
           },
         ],
         generationConfig: {
-          temperature: 0,
           maxOutputTokens: 1024,
-          thinkingConfig: { thinkingBudget: 0 },
+          thinkingConfig: { thinkingLevel: "low" },
           responseMimeType: "application/json",
         },
       }),

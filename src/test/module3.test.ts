@@ -1,4 +1,4 @@
-import { toGeminiResponseSchema } from "@/lib/server/task-plan";
+import { parseGeminiPlanText, toGeminiResponseSchema } from "@/lib/server/task-plan";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -171,7 +171,7 @@ describe("task manager and verification", () => {
             action: {
               kind: "key_press",
               targetId: "vscode",
-              keys: "win+r",
+              keys: " Win + R ",
               description: "Open the Run dialog",
             },
             requiresApproval: false,
@@ -183,6 +183,31 @@ describe("task manager and verification", () => {
       ["key_press"],
     );
     expect(result[0]?.action).toMatchObject({ kind: "key_press", keys: "windows+r" });
+  });
+
+  it("rejects a key outside the worker allowlist before approval or execution", () => {
+    expect(() =>
+      normalizeProviderPlan(
+        {
+          ok: true,
+          plan: ["Open an unsupported shortcut"],
+          summary: "Open an unsupported shortcut",
+          steps: [
+            {
+              action: {
+                kind: "key_press",
+                targetId: "vscode",
+                keys: "ctrl+shift+s",
+                description: "Press shortcut",
+              },
+              requiresApproval: false,
+            },
+          ],
+        },
+        DEFAULT_TARGETS[0]!,
+        ["key_press"],
+      ),
+    ).toThrow(/Key "ctrl\+shift\+s" is not on the allowlist/);
   });
 
   it("does not treat a failed worker result as verified", () => {
@@ -241,7 +266,7 @@ describe("AI provider adapter", () => {
         displayName: "Google Gemini",
         type: "gemini",
         connectionMethod: "api_key",
-        model: "gemini-2.5-flash",
+        model: "gemini-3.8-flash",
         enabled: true,
         connectionStatus: "configured_unverified",
       },
@@ -267,7 +292,7 @@ describe("AI provider adapter", () => {
         displayName: "Google Gemini",
         type: "gemini",
         connectionMethod: "api_key",
-        model: "gemini-2.5-flash",
+        model: "gemini-3.8-flash",
         enabled: true,
         connectionStatus: "configured_unverified",
       },
@@ -512,12 +537,23 @@ describe("secure AI task-plan endpoint", () => {
 });
 
 describe("Gemini direct schema", () => {
-  it("removes additionalProperties at every level", () => {
+  it("repairs a malformed Gemini JSON string before strict plan validation", () => {
+    const parsed = parseGeminiPlanText(
+      '{"plan":["Inspect"],"summary":"Inspect desktop","steps":[{"action":{"kind":"read_screen","targetId":"desktop","description":"Inspect desktop',
+    );
+    expect(parsed.steps[0]?.action).toMatchObject({ kind: "read_screen", targetId: "desktop" });
+  });
+
+  it("removes unsupported schema keywords at every level", () => {
     const out = toGeminiResponseSchema({
       type: "object",
       additionalProperties: false,
-      properties: { a: { type: "object", additionalProperties: false, properties: {} } },
+      allOf: [],
+      properties: {
+        a: { type: "object", additionalProperties: false, allOf: [], properties: {} },
+      },
     });
     expect(JSON.stringify(out)).not.toContain("additionalProperties");
+    expect(JSON.stringify(out)).not.toContain("allOf");
   });
 });

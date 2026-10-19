@@ -16,9 +16,9 @@ export const DEFAULT_PROVIDERS: Provider[] = [
     displayName: "Google Gemini",
     type: "gemini",
     connectionMethod: "api_key",
-    model: "gemini-2.5-flash",
-    enabled: false,
-    connectionStatus: "not_configured",
+    model: "gemini-3.8-flash",
+    enabled: true,
+    connectionStatus: "configured_unverified",
   },
   {
     id: "openai",
@@ -56,6 +56,14 @@ export const DEFAULT_PROFILES: AccountProfile[] = [
     authMethod: "none",
     credentialRef: "",
     notes: "Local model",
+  },
+  {
+    id: "gemini-server-key",
+    name: "Gemini API key (server environment)",
+    providerId: "gemini",
+    authMethod: "api_key_ref",
+    credentialRef: "GEMINI_API_KEY",
+    notes: "Key is read by the server from the environment and is not stored in browser profile data.",
   },
 ];
 

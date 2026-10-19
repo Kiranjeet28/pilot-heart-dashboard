@@ -18,6 +18,7 @@ export const ALLOWED_KEYS = [
   "ctrl+c",
   "ctrl+v",
   "ctrl+z",
+  "ctrl+,",
   "shift+home",
   "shift+end",
   "windows",

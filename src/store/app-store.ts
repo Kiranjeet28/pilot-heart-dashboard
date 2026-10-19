@@ -798,6 +798,20 @@ export const actions = {
   hydrate() {
     if (state.hydrated) return;
     const config = load<Pick<AppState, "providers" | "profiles" | "targets">>("config");
+    const savedProviders = config?.providers ?? DEFAULT_PROVIDERS;
+    const providers = savedProviders.map((provider) =>
+      provider.id === "gemini"
+        ? {
+            ...provider,
+            enabled: true,
+            model: provider.model === "gemini-2.5-flash" ? "gemini-3.8-flash" : provider.model,
+          }
+        : provider,
+    );
+    const savedProfiles = config?.profiles ?? DEFAULT_PROFILES;
+    const profiles = savedProfiles.some((profile) => profile.providerId === "gemini")
+      ? savedProfiles
+      : [...savedProfiles, ...DEFAULT_PROFILES.filter((profile) => profile.providerId === "gemini")];
     const tasks = load<Task[]>("tasks") ?? [];
     const activity = load<ActivityEvent[]>("activity") ?? [];
     const settings = load<AppSettings & { emergencyStop?: boolean }>("settings");
@@ -810,6 +824,8 @@ export const actions = {
     state = {
       ...state,
       ...(config ?? {}),
+      providers,
+      profiles,
       tasks: restored,
       activity,
       settings: settings
@@ -955,7 +971,7 @@ export const actions = {
     if (isReal()) set({ realActionsConfirmed: true });
     patchTask(id, {
       planApproved: true,
-      steps: t.steps.map((s) => ({ ...s, approved: true })),
+      steps: t.steps.map((s) => ({ ...s, approved: true, requiresApproval: false })),
     });
     if (!transition(id, "running")) {
       return { ok: false, message: "Task state changed before approval could be applied. Please try again." };

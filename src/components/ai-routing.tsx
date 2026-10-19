@@ -78,14 +78,15 @@ export function AiRoutingPanel() {
   }
 
   return (
-    <Panel title="AI planner (Local Qwen)">
+    <Panel title="AI planner providers">
       <div className="space-y-4">
         <div className="rounded border bg-muted/40 p-3 text-xs space-y-1">
-          <p className="font-medium text-foreground">Local Qwen (llama-server)</p>
+          <p className="font-medium text-foreground">Choose a planner per task</p>
           <p className="text-muted-foreground">
-            All task planning and replanning paths use your local llama-server running model alias{" "}
-            <code className="font-mono text-foreground font-semibold">qwen</code>. Remote planning
-            services (Gemini, Lovable AI) are permanently disabled.
+            Select Local Qwen or Google Gemini in the task configuration. Gemini planning uses the
+            server-side <code className="font-mono text-foreground">GEMINI_API_KEY</code>; the key
+            is never sent to the browser. Both planners use the same action validation and approval
+            rules.
           </p>
         </div>
 

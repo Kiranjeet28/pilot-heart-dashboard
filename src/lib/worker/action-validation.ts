@@ -67,7 +67,7 @@ export function validateAction(a: ActionRequest, ctx: ValidationContext = {}): V
   }
   if (a.kind === "key_press") {
     if (!a.keys) return { ok: false, reason: "key_press requires keys" };
-    if (ctx.strict && !(ALLOWED_KEYS as readonly string[]).includes(a.keys.toLowerCase()))
+    if (!(ALLOWED_KEYS as readonly string[]).includes(a.keys.trim().toLowerCase()))
       return { ok: false, reason: `Key "${a.keys}" is not on the allowlist` };
   }
   if (

@@ -86,15 +86,16 @@ const actionSchema = z
         message: "key_press requires keys",
       });
     }
-    if (action.kind === "launch_app" && !action.app) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "launch_app requires an approved app" });
-    }
   })
   .transform(({ requiresApproval: _requiresApproval, ...action }): ActionRequest => ({
     kind: action.kind,
     targetId: action.targetId,
     description: action.description,
-    ...(action.app !== undefined ? { app: action.app } : {}),
+    ...(action.kind === "launch_app"
+      ? { app: action.app ?? "notepad" }
+      : action.app !== undefined
+        ? { app: action.app }
+        : {}),
     ...(action.text !== undefined ? { text: action.text } : {}),
     ...(action.x !== undefined ? { x: action.x } : {}),
     ...(action.y !== undefined ? { y: action.y } : {}),
@@ -304,8 +305,16 @@ export class LocalQwenProvider implements ProviderAdapter {
   }
 }
 
-/** Backwards-compatible export for any existing tests/imports. */
-export const GeminiProvider = LocalQwenProvider;
+/** Gemini planning is routed through the authenticated server route; API keys never reach the browser. */
+export class GeminiProvider implements ProviderAdapter {
+  readonly name = "Google Gemini";
+  readonly type = "gemini" as const;
+  private readonly serverAdapter = new LocalQwenProvider();
+
+  getNextStep(request: AIRequest): Promise<AIProviderResult> {
+    return this.serverAdapter.getNextStep(request);
+  }
+}
 
 export class MockAIProvider implements ProviderAdapter {
   readonly name = "Mock AI";
