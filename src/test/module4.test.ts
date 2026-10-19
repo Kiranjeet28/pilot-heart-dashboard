@@ -175,6 +175,26 @@ describe("/api/tasks/check", () => {
     expect(res.status).toBe(200);
     expect(((await res.json()) as { verdict: string }).verdict).toBe("ok");
   });
+  it("sends the Gemini key in a header, never in the request URL", async () => {
+    vi.stubEnv("LOVABLE_API_KEY", "");
+    vi.stubEnv("GEMINI_API_KEY", "test-gemini-secret");
+    vi.stubEnv("GEMINI_MODEL", "gemini-3.8-flash");
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(url)).toBe(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent",
+      );
+      expect(String(url)).not.toContain("test-gemini-secret");
+      expect(new Headers(init?.headers).get("x-goog-api-key")).toBe("test-gemini-secret");
+      return Response.json({
+        candidates: [{ content: { parts: [{ text: JSON.stringify({ verdict: "ok", reason: "Visible", screenSummary: "Desktop" }) }] } }],
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const res = await handleStepCheckRequest(req(good));
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
   it("rejects a malformed model answer", async () => {
     vi.stubEnv("LOVABLE_API_KEY", "test-key");
     vi.stubGlobal(

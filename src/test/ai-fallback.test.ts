@@ -236,6 +236,7 @@ describe("Local-only Qwen planning (Acceptance Criteria 1-10)", () => {
 describe("selected AI provider routing", () => {
   it.each(["gemini", "grok"] as const)("sends %s plans to its server-side provider without local fallback", async (providerId) => {
     const provider = DEFAULT_PROVIDERS.find((item) => item.id === providerId)!;
+    const controller = new AbortController();
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => Response.json({
       summary: "Provider test plan",
       plan: ["Observe only"],
@@ -243,7 +244,7 @@ describe("selected AI provider routing", () => {
     }));
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await routedProvider(provider).getNextStep({
+    const result = await routedProvider(provider, undefined, controller.signal).getNextStep({
       provider,
       userRequest: "Provider connectivity test. Return one read_screen action only.",
       targetId: "desktop",
@@ -253,6 +254,7 @@ describe("selected AI provider routing", () => {
     expect(result.ok).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0]?.[0])).toBe("/api/tasks/plan");
+    expect(fetchMock.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
     const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as Record<string, unknown>;
     expect(body["providerId"]).toBe(providerId);
     expect(body["modelOverride"]).toBe(provider.model);

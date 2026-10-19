@@ -142,7 +142,7 @@ are not sent. The worker answers `423 worker_stopped` until you reset the emerge
 | Dashboard: "Could not reach the worker" | Is the worker running? Does the port match? Is the exact page origin in `allowed_origins` (restart after editing)? Did you allow local network access? On Safari, use local development |
 | `origin_not_allowed` in the worker log | Add the origin shown in the log to `allowed_origins` and restart |
 | "rejected the session" / 401 | The token expired or the key was rotated. Restart the worker for a new code and pair again |
-| Pairing code rejected | It works once, expires after 30 minutes, and allows 5 attempts. Restart the worker for a new one |
+| Pairing code rejected | It works once, expires after 5 minutes, and allows 5 attempts. Restart the worker for a new one |
 | `409 observation_stale` / `screen_changed` | Capture again (observations last 60 s; display changes invalidate them) |
 | `423 failsafe_triggered` | The mouse hit a screen corner. Reset the Emergency Stop in the dashboard |
 | Clicks land in the wrong place | Use the main display. Multi-monitor and mixed DPI aren't supported yet |

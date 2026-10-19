@@ -117,11 +117,11 @@ async function viaDirect(i: StepCheckInput, signal: AbortSignal) {
   const m = model().split("/").pop();
   const [, mime = "image/png", b64 = ""] = i.imageDataUrl.match(/^data:([^;]+);base64,(.*)$/) ?? [];
   const res = await fetch(
-    `${GEMINI_DIRECT_URL}/${m}:generateContent?key=${encodeURIComponent(key)}`,
+    `${GEMINI_DIRECT_URL}/${m}:generateContent`,
     {
       method: "POST",
       signal,
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "x-goog-api-key": key },
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: SYSTEM }] },
         contents: [

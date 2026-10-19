@@ -58,7 +58,7 @@ export function CurrentTask({ task }: { task?: Task | undefined }) {
       ) : null}
       <LocalThinkingNote />
       {task.error ? <p className="mt-3 rounded border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">{task.error}</p> : null}
-      {task.summary && status === "completed" ? <p className="mt-3 rounded border border-success/30 bg-success/5 p-2 text-xs">{task.summary}</p> : null}
+      {task.summary && (status === "completed" || status === "unverified") ? <p className={`mt-3 rounded border p-2 text-xs ${status === "unverified" ? "border-warning/30 bg-warning/5" : "border-success/30 bg-success/5"}`}>{task.summary}</p> : null}
       <div className="mt-4 flex flex-wrap gap-2">
         <Button size="sm" variant="secondary" disabled={!canPause} onClick={() => actions.pause(task.id)}><Pause className="h-4 w-4" /> Pause</Button>
         <Button size="sm" variant="secondary" disabled={status !== "paused"} onClick={() => { const issues = actions.resume(task.id); if (issues.length) toast.error(issues[0]); }}><Play className="h-4 w-4" /> Resume</Button>

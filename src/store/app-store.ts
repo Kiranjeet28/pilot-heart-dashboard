@@ -137,13 +137,16 @@ export const localWorker = new LocalHttpWorker({
 });
 /** One AbortController per task so Cancel/Stop also aborts an in-flight local model call. */
 const aiAborts = new Map<string, AbortController>();
-function aiAbortFor(id: string): AbortSignal {
+function aiControllerFor(id: string): AbortController {
   let c = aiAborts.get(id);
   if (!c || c.signal.aborted) {
     c = new AbortController();
     aiAborts.set(id, c);
   }
-  return c.signal;
+  return c;
+}
+function aiAbortFor(id: string): AbortSignal {
+  return aiControllerFor(id).signal;
 }
 configureAiRouting(() => ({
   mode: state.settings.aiMode,
@@ -193,7 +196,7 @@ function patchTask(id: string, patch: Partial<Task>) {
 function transition(id: string, to: TaskStatus, extra: Partial<Task> = {}): boolean {
   const t = getTask(id);
   if (!t || !canTransition(t.status, to)) return false;
-  const terminal = to === "completed" || to === "failed" || to === "cancelled";
+  const terminal = to === "completed" || to === "unverified" || to === "failed" || to === "cancelled";
   patchTask(id, { status: to, ...(terminal ? { endedAt: Date.now() } : {}), ...extra });
   return true;
 }
@@ -215,6 +218,8 @@ function schedule(id: string, ms = 300) {
 
 function fail(id: string, error: string) {
   batchStates.delete(id);
+  aiAborts.get(id)?.abort();
+  aiAborts.delete(id);
   if (transition(id, "failed", { error, summary: `Failed: ${error}` }))
     log(id, "error", error, false, true);
 }
@@ -386,6 +391,7 @@ async function tick(id: string) {
   inFlightTicks.add(id);
   const w = localWorker;
   const tag = "[REAL]";
+  let inferenceDeadlineTimer: ReturnType<typeof setTimeout> | undefined;
   try {
     if (t.deadlineAt && Date.now() >= t.deadlineAt) return fail(id, "Task execution timed out");
     if (t.status === "queued") {
@@ -425,6 +431,14 @@ async function tick(id: string) {
 
       if (t.status === "planning") {
         transition(id, "running");
+      }
+
+      const taskAbort = aiControllerFor(id);
+      if (t.deadlineAt) {
+        inferenceDeadlineTimer = setTimeout(
+          () => taskAbort.abort(),
+          Math.max(0, t.deadlineAt - Date.now()),
+        );
       }
 
       // If the task already has accepted/unexecuted steps (e.g. after user approval),
@@ -467,6 +481,9 @@ async function tick(id: string) {
               provider,
               profile,
               context: input.context,
+              timeoutMs: t.deadlineAt
+                ? Math.max(1000, Math.min(300000, t.deadlineAt - Date.now()))
+                : 300000,
             });
           },
           validateAction: (action) => {
@@ -631,7 +648,12 @@ async function tick(id: string) {
               return { ok: false, stale: true };
             }
           },
-          isCancelled: () => Boolean(state.emergencyStop || getTask(id)?.status === "cancelled"),
+          isCancelled: () =>
+            Boolean(
+              state.emergencyStop ||
+                getTask(id)?.status === "cancelled" ||
+                getTask(id)?.status === "paused",
+            ),
           isDeadlineExceeded: () => Boolean(t.deadlineAt && Date.now() >= t.deadlineAt),
           requiresApproval: (step) => {
             const s = step as PlannedStep;
@@ -661,27 +683,49 @@ async function tick(id: string) {
         {
           maxBatches: PLAN_CHUNK_MAX_COUNT,
           maxTotalSteps: PLAN_MAX_TOTAL_STEPS,
-          maxRetriesPerAction: t.maxRetries ?? 2,
           initialPlan,
         },
       );
 
       if (getTask(id)?.status !== "running" && getTask(id)?.status !== "planning") return;
 
+      if (t.deadlineAt && Date.now() >= t.deadlineAt) return fail(id, "Task execution timed out");
+
       if (orchestrationResult.stoppedReason === "completed") {
         const tname = state.targets.find((x) => x.id === t.targetId)?.displayName ?? t.targetId;
-        transition(id, "completed", {
-          progress: 100,
-          summary: `Completed ${orchestrationResult.totalActionsExecuted} authenticated worker steps across ${orchestrationResult.batchesExecuted} batch(es) on ${tname}. Task objective achieved.`,
+        const verification = getTask(id)?.verification;
+        const unverified = verification?.status === "unverified";
+        transition(id, unverified ? "unverified" : "completed", {
+          progress: unverified ? getTask(id)?.progress ?? 0 : 100,
+          summary: unverified
+            ? `Task stopped with an unverified result on ${tname}: ${verification.reason ?? "the final result could not be confirmed"}`
+            : `Completed ${orchestrationResult.totalActionsExecuted} authenticated worker steps across ${orchestrationResult.batchesExecuted} batch(es) on ${tname}. Task objective achieved.`,
         });
-        log(id, "result", "Task completed (real local worker)", false, true);
+        log(
+          id,
+          unverified ? "warning" : "result",
+          unverified ? "Task result is unverified" : "Task completed (real local worker)",
+          false,
+          true,
+        );
         batchStates.delete(id);
+        aiAborts.delete(id);
+      } else if (orchestrationResult.stoppedReason === "unverified") {
+        transition(id, "unverified", {
+          summary: `Task stopped with an unverified result: ${orchestrationResult.error ?? "the objective could not be confirmed"}`,
+        });
+        log(id, "warning", "Task stopped with an unverified result", false, true);
+        batchStates.delete(id);
+        aiAborts.delete(id);
       } else if (orchestrationResult.stoppedReason === "cancelled") {
         transition(id, "cancelled");
         log(id, "warning", "Task was cancelled");
         batchStates.delete(id);
+        aiAborts.get(id)?.abort();
+        aiAborts.delete(id);
       } else if (orchestrationResult.stoppedReason === "approval_required") {
         // Paused in waiting_for_approval; batchStates is retained for resumption when approved.
+        aiAborts.delete(id);
       } else if (orchestrationResult.stoppedReason === "deadline_exceeded") {
         fail(id, "Task execution timed out");
       } else {
@@ -693,6 +737,7 @@ async function tick(id: string) {
     if (e instanceof WorkerUnavailableError) fail(id, e.message);
     else fail(id, e instanceof Error ? e.message : "Unknown error");
   } finally {
+    if (inferenceDeadlineTimer) clearTimeout(inferenceDeadlineTimer);
     inFlightTicks.delete(id);
   }
 }
@@ -705,13 +750,11 @@ export interface NewTaskInput {
   targetId: string;
   /** Optional per-task limits (Prompt Workspace). Clamped to safe bounds. */
   maxMinutes?: number;
-  maxRetries?: number;
   /** Optional project context shown on the task detail page. */
   context?: string;
 }
 
 export const clampMinutes = (m?: number) => Math.min(30, Math.max(1, Math.round(m ?? 10)));
-export const clampRetries = (r?: number) => Math.min(2, Math.max(0, Math.round(r ?? 2)));
 
 export const actions = {
   hydrate() {
@@ -805,14 +848,13 @@ export const actions = {
       const issues = actions.readiness(input);
       if (issues.length) return { ok: false, issues };
     }
-    const { maxMinutes, maxRetries, context, ...base } = input;
+    const { maxMinutes, context, ...base } = input;
     const ctx = context?.trim().slice(0, 2000);
     const task: Task = {
       id: uid("task"),
       ...base,
       description: input.description.trim(),
       ...(ctx ? { context: ctx } : {}),
-      maxRetries: clampRetries(maxRetries),
       status: "draft",
       createdAt: Date.now(),
       progress: 0,
@@ -851,6 +893,8 @@ export const actions = {
     const t = getTask(id);
     if (!t || !transition(id, "paused")) return;
     clearTimer(id);
+    aiAborts.get(id)?.abort();
+    aiAborts.delete(id);
     log(id, "info", "Paused by user", false);
   },
 
@@ -918,7 +962,6 @@ export const actions = {
       {
         description: t.description,
         ...(t.context ? { context: t.context } : {}),
-        ...(t.maxRetries !== undefined ? { maxRetries: t.maxRetries } : {}),
         providerId: t.providerId,
         profileId: t.profileId,
         targetId: t.targetId,

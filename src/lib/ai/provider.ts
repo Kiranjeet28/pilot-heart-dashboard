@@ -19,6 +19,7 @@ export interface AIRequest {
   context?: string[] | undefined;
   modelOverride?: string | undefined;
   timeoutMs?: number | undefined;
+  signal?: AbortSignal | undefined;
 }
 
 export interface ProviderResult {
@@ -260,6 +261,7 @@ export class LocalQwenProvider implements ProviderAdapter {
       const response = await fetch("/api/tasks/plan", {
         method: "POST",
         headers: { "content-type": "application/json" },
+        ...(request.signal ? { signal: request.signal } : {}),
         body: JSON.stringify({
           taskId: request.taskId,
           userRequest: request.userRequest,

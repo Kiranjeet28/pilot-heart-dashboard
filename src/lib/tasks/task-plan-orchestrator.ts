@@ -216,7 +216,6 @@ export interface TaskBatchExecutionState {
 export interface TaskBatchOrchestratorOptions {
   maxBatches?: number | undefined;
   maxTotalSteps?: number | undefined;
-  maxRetriesPerAction?: number | undefined;
   initialPlan?: ProviderResult | undefined;
 }
 
@@ -303,53 +302,12 @@ export function isTaskObjectiveComplete(
       }
     | undefined,
 ): boolean {
-  if (!summary && (!plan || plan.length === 0)) {
-    if (
-      options?.batchesExecuted &&
-      options.batchesExecuted > 0 &&
-      options.planSteps &&
-      options.planSteps.length === 0
-    ) {
-      return true;
-    }
-    return false;
-  }
-  const text = `${summary ?? ""} ${plan?.join(" ") ?? ""}`.toLowerCase();
-  const completionMarkers = [
-    "task complete",
-    "task is complete",
-    "task completed",
-    "objective complete",
-    "objective achieved",
-    "goal achieved",
-    "goal complete",
-    "all actions completed",
-    "all steps completed",
-    "all steps complete",
-    "finished task",
-    "completed the task",
-    "no further actions required",
-    "no further actions needed",
-    "no further action needed",
-    "no more actions needed",
-    "nothing more to do",
-    "[complete]",
-    "[completed]",
-    "done",
-    "finished",
-  ];
-  if (completionMarkers.some((marker) => text.includes(marker))) {
-    return true;
-  }
-  if (
-    options?.batchesExecuted &&
-    options.batchesExecuted > 0 &&
-    options.planSteps &&
-    options.planSteps.length === 0
-  ) {
-    return true;
-  }
-  return false;
+  // Completion is a control signal, not a keyword search over model prose or
+  // action descriptions. Only the planner's explicit leading marker counts.
+  void plan;
+  void remainingObjective;
+  void options;
+  return /^\s*\[complete\](?:\s|$)/i.test(summary ?? "");
 }
 
 /**
@@ -418,6 +376,7 @@ export interface TaskBatchOrchestrationResult {
   totalActionsExecuted: number;
   stoppedReason?:
     | "completed"
+    | "unverified"
     | "cancelled"
     | "approval_required"
     | "action_failed"
@@ -516,14 +475,16 @@ export async function orchestrateTaskBatches(
       };
     }
 
-    // If a follow-up batch has 0 steps, the planner has concluded the objective is achieved
+    // An empty plan is not evidence that the objective was achieved. This can also
+    // happen when a planner cannot safely continue (for example, it cannot ground a click).
     if (planResult.steps.length === 0) {
       if (batchesExecuted > 0) {
         return {
-          completed: true,
+          completed: false,
           batchesExecuted,
           totalActionsExecuted,
-          stoppedReason: "completed",
+          stoppedReason: "unverified",
+          error: planResult.summary?.trim() || "The planner provided no follow-up action or verification.",
           completedActionsSummary,
           lastObservation: latestObservation,
         };
@@ -533,7 +494,9 @@ export async function orchestrateTaskBatches(
         batchesExecuted,
         totalActionsExecuted,
         stoppedReason: "error",
-        error: "Planning batch returned no steps",
+        error: planResult.summary?.trim()
+          ? `Planning returned no executable steps; objective was not verified. ${planResult.summary.trim()}`
+          : "Planning returned no executable steps; objective was not verified.",
         completedActionsSummary,
         lastObservation: latestObservation,
       };
@@ -630,43 +593,27 @@ export async function orchestrateTaskBatches(
         }
       }
 
-      // Fresh observation requirement: coordinate actions require a fresh observation
+      // The observation ID is provenance from planning; never attach a new ID here.
       if (step.action.kind === "click") {
         const clickAction = step.action as { observationId?: string };
         if (!clickAction.observationId) {
-          const freshObs = await handlers.observeDesktop();
-          if (!freshObs.ok || freshObs.stale) {
-            return {
-              completed: false,
-              batchesExecuted,
-              totalActionsExecuted,
-              stoppedReason: "observation_failed",
-              error: freshObs.stale
-                ? "Observation is stale before coordinate action; refusing to continue blindly"
-                : "Fresh desktop observation failed before click",
-              completedActionsSummary,
-              lastObservation: latestObservation,
-            };
-          }
-          latestObservation = freshObs.observation;
-          if (freshObs.observationId) {
-            clickAction.observationId = freshObs.observationId;
-          }
+          return {
+            completed: false,
+            batchesExecuted,
+            totalActionsExecuted,
+            stoppedReason: "validation_failed",
+            error: "Click has no observation ID from the screenshot used to ground its coordinates.",
+            completedActionsSummary,
+            lastObservation: latestObservation,
+          };
         }
       }
 
       handlers.onActionStart?.(step, totalActionsExecuted);
 
-      let actionResult = await handlers.executeAction(step.action);
-      if (!actionResult.ok && (options?.maxRetriesPerAction ?? 0) > 0) {
-        const maxR = options!.maxRetriesPerAction!;
-        let attempt = 0;
-        while (!actionResult.ok && attempt < maxR) {
-          if (handlers.isCancelled?.() || handlers.isDeadlineExceeded?.()) break;
-          attempt++;
-          actionResult = await handlers.executeAction(step.action);
-        }
-      }
+      // A failed/unknown worker reply may mean the action executed but its response was lost.
+      // Never resend desktop actions automatically; a duplicate can be destructive.
+      const actionResult = await handlers.executeAction(step.action);
 
       handlers.onActionComplete?.(step, totalActionsExecuted, actionResult);
 

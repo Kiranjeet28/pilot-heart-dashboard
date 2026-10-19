@@ -198,6 +198,7 @@ describe("DesktopPilot — Qwen Invalid Plans and Orchestration Fixes (13 Requir
             targetId: "notepad",
             x: 100,
             y: 100,
+            observationId: "obs_12345678",
             description: "Step 2: Click",
           },
           requiresApproval: false,
@@ -229,12 +230,12 @@ describe("DesktopPilot — Qwen Invalid Plans and Orchestration Fixes (13 Requir
           executedSteps.push((action as { description: string }).description);
           return { ok: true };
         },
-        observeDesktop: async () => ({ ok: true }),
+        observeDesktop: async () => ({ ok: true, observationId: "obs_12345678" }),
         isTaskComplete: () => true,
       },
     );
 
-    expect(result.completed).toBe(true);
+    expect(result).toMatchObject({ completed: true });
     expect(executedSteps).toEqual(["Step 1: Read", "Step 2: Click", "Step 3: Type"]);
     expect(result.totalActionsExecuted).toBe(3);
   });
@@ -399,7 +400,7 @@ describe("DesktopPilot — Qwen Invalid Plans and Orchestration Fixes (13 Requir
           planCalls++;
           return {
             ok: true,
-            summary: "Task complete",
+            summary: "[complete] Task complete",
             plan: ["Close window"],
             steps: [
               {
@@ -418,7 +419,7 @@ describe("DesktopPilot — Qwen Invalid Plans and Orchestration Fixes (13 Requir
       },
     );
 
-    expect(result.completed).toBe(true);
+    expect(result).toMatchObject({ completed: true });
     expect(planCalls).toBe(1);
     expect(result.batchesExecuted).toBe(1);
   });

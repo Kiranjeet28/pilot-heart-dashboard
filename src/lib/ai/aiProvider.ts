@@ -879,10 +879,20 @@ export function routedProvider(
   signal?: AbortSignal,
 ): ProviderAdapter {
   if (provider.id === "gemini" || provider.type === "gemini") {
-    return new GeminiProvider();
+    const adapter = new GeminiProvider();
+    return {
+      name: adapter.name,
+      type: adapter.type,
+      getNextStep: (request) => adapter.getNextStep({ ...request, signal }),
+    };
   }
   if (provider.id === "grok" || provider.type === "grok") {
-    return new GrokProvider();
+    const adapter = new GrokProvider();
+    return {
+      name: adapter.name,
+      type: adapter.type,
+      getNextStep: (request) => adapter.getNextStep({ ...request, signal }),
+    };
   }
   return {
     name: "Local Qwen",

@@ -14,6 +14,7 @@ const TONE: Record<TaskStatus, string> = {
   verifying: "border-info/40 text-info",
   paused: "border-warning/40 text-warning",
   completed: "border-success/40 text-success",
+  unverified: "border-warning/50 text-warning",
   failed: "border-destructive/50 text-destructive",
   cancelled: "border-border text-muted-foreground",
 };

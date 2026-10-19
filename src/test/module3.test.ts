@@ -374,6 +374,51 @@ describe("secure AI task-plan endpoint", () => {
     expect(json.ok).toBe(true);
   });
 
+  it("rejects unknown providers instead of silently routing them to the local model", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const response = await postPlan(
+      { providerId: "unknown-provider", userRequest: "Inspect the desktop" },
+      { origin: "http://localhost:3000" },
+    );
+
+    expect(response.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("propagates a cancelled browser request to the server-side provider call", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "test-gemini-key");
+    vi.stubEnv("GEMINI_MODEL", "gemini-3.8-flash");
+    const controller = new AbortController();
+    let providerSignal: AbortSignal | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: RequestInfo | URL, init?: RequestInit) => {
+        providerSignal = init?.signal as AbortSignal | undefined;
+        return new Promise<Response>((_resolve, reject) =>
+          providerSignal?.addEventListener("abort", () => reject(new DOMException("Aborted", "AbortError")), { once: true }),
+        );
+      }),
+    );
+    const request = new Request("http://localhost:3000/api/tasks/plan", {
+      method: "POST",
+      headers: { "content-type": "application/json", origin: "http://localhost:3000" },
+      body: JSON.stringify({ providerId: "gemini", userRequest: "Inspect the desktop" }),
+      signal: controller.signal,
+    });
+    const pending = handleTaskPlanRequest(request);
+    await vi.waitFor(() => expect(providerSignal).toBeDefined());
+    controller.abort();
+
+    expect(providerSignal?.aborted).toBe(true);
+    expect((await pending).status).toBe(499);
+  });
+
+  it("allows a task to end with an explicit unverified status", () => {
+    expect(canTransition("running", "unverified")).toBe(true);
+    expect(canTransition("unverified", "completed")).toBe(false);
+  });
+
   it("accepts a configured backend token for internal clients", async () => {
     process.env["DESKTOPPILOT_SERVER_TOKEN"] = "server-token-123";
     process.env["LOVABLE_API_KEY"] = "test-gateway-key";

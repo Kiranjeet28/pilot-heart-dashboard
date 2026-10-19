@@ -51,6 +51,7 @@ export type TaskStatus =
   | "verifying"
   | "paused"
   | "completed"
+  | "unverified"
   | "failed"
   | "cancelled";
 
@@ -132,8 +133,6 @@ export interface Task {
   steps: PlannedStep[];
   currentStep: number;
   retries: number;
-  /** Retry limit per failed step (0-2, default 2). */
-  maxRetries?: number;
   /** Optional project context entered in the Prompt Workspace. */
   context?: string;
   replans?: number;

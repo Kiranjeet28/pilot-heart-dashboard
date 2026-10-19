@@ -6,9 +6,8 @@ import {
     validateTaskDecomposition,
     mergeChunkPlans,
     getReadyChunks,
+    isTaskObjectiveComplete,
     orchestrateTaskBatches,
-    buildBatchContinuationContext,
-    buildNextPlanningBatchInput,
 } from "@/lib/tasks/task-plan-orchestrator";
 import type { ProviderResult } from "@/lib/ai/provider";
 
@@ -17,6 +16,13 @@ describe("task plan orchestration foundation", () => {
         expect(PLAN_CHUNK_MAX_OUTPUT_TOKENS).toBe(500);
         expect(PLAN_CHUNK_MAX_COUNT).toBe(8);
         expect(PLAN_MAX_TOTAL_STEPS).toBe(12);
+    });
+
+    it("requires the explicit leading completion marker and ignores positive or negative prose", () => {
+        expect(isTaskObjectiveComplete("[complete] Notepad opened", [], "open Notepad")).toBe(true);
+        expect(isTaskObjectiveComplete("Finished the task", [], "open Notepad")).toBe(false);
+        expect(isTaskObjectiveComplete("Not complete; click target unavailable", [], "open Notepad")).toBe(false);
+        expect(isTaskObjectiveComplete("Started [complete] only as a literal", [], "open Notepad")).toBe(false);
     });
 
     it("accepts valid independent chunks", () => {
@@ -247,8 +253,9 @@ describe("task plan orchestration foundation", () => {
         expect(result.error).toContain("Reached max batches (2) before confirming task completion");
     });
 
-    it("binds fresh observationId to click actions and feeds structured observation into replanning", async () => {
-        let executedAction: unknown;
+    it("does not invent or attach an observation ID to a click", async () => {
+        let executedCount = 0;
+        let observationCount = 0;
         const result = await orchestrateTaskBatches(
             { userRequest: "Click button" },
             {
@@ -264,44 +271,74 @@ describe("task plan orchestration foundation", () => {
                     ],
                 }),
                 validateAction: () => ({ ok: true }),
-                executeAction: async (action) => {
-                    executedAction = action;
+                executeAction: async () => {
+                    executedCount++;
                     return { ok: true, message: "Clicked" };
                 },
-                observeDesktop: async () => ({
-                    ok: true,
-                    observationId: "obs_fresh_999",
-                    observation: "Target: Desktop (1920x1080) [id:obs_fresh_999] at 1713456789. Visual: Notepad window active.",
-                }),
-                isTaskComplete: () => true,
+                observeDesktop: async () => {
+                    observationCount++;
+                    return { ok: true, observationId: "obs_fresh_999", observation: "Fresh screenshot" };
+                },
             },
         );
 
-        expect(result.completed).toBe(true);
-        expect((executedAction as { observationId?: string })?.observationId).toBe("obs_fresh_999");
-        expect(result.lastObservation).toContain("obs_fresh_999");
-        expect(result.lastObservation).toContain("Notepad window active");
+        expect(result.completed).toBe(false);
+        expect(result.stoppedReason).toBe("validation_failed");
+        expect(result.error).toContain("no observation ID");
+        expect(observationCount).toBe(0);
+        expect(executedCount).toBe(0);
+    });
 
-        // Verify structured observation context formatting
-        const continuationContext = buildBatchContinuationContext({
-            originalObjective: "Click button",
-            remainingObjective: "Remaining click",
-            completedActionsSummary: ["Clicked"],
-            latestObservation: result.lastObservation,
-        });
-        expect(continuationContext).toContain(
-            `Latest observation: ${result.lastObservation}`,
-        );
-
-        const nextInput = buildNextPlanningBatchInput(
-            { userRequest: "Click button" },
+    it("reports an empty follow-up plan as unverified instead of complete", async () => {
+        let calls = 0;
+        const result = await orchestrateTaskBatches(
+            { userRequest: "Do the whole task" },
             {
-                originalObjective: "Click button",
-                remainingObjective: "Remaining click",
-                completedActionsSummary: ["Clicked"],
-                latestObservation: result.lastObservation,
+                planBatch: async () => {
+                    calls++;
+                    return calls === 1
+                        ? {
+                            ok: true as const,
+                            plan: ["Initial action"],
+                            summary: "Continue",
+                            steps: [{ action: { kind: "wait" as const, targetId: "desktop", description: "Wait", durationMs: 0 }, requiresApproval: false }],
+                        }
+                        : { ok: true as const, plan: [], summary: "No safe click available", steps: [] };
+                },
+                validateAction: () => ({ ok: true }),
+                executeAction: async () => ({ ok: true }),
+                observeDesktop: async () => ({ ok: true, observation: "Observed" }),
+                isTaskComplete: () => false,
             },
         );
-        expect(nextInput.context?.some((c) => c.includes("obs_fresh_999"))).toBe(true);
+
+        expect(result.completed).toBe(false);
+        expect(result.stoppedReason).toBe("unverified");
+        expect(result.error).toContain("No safe click available");
+    });
+
+    it("never retries a desktop action after a failed or ambiguous response", async () => {
+        let executeCount = 0;
+        const result = await orchestrateTaskBatches(
+            { userRequest: "Click once" },
+            {
+                planBatch: async () => ({
+                    ok: true,
+                    plan: ["Click"],
+                    summary: "Click once",
+                    steps: [{ action: { kind: "wait", targetId: "desktop", description: "Wait", durationMs: 0 }, requiresApproval: false }],
+                }),
+                validateAction: () => ({ ok: true }),
+                executeAction: async () => {
+                    executeCount++;
+                    return { ok: false, error: "response lost", message: "Unknown outcome" };
+                },
+                observeDesktop: async () => ({ ok: true, observation: "Observed" }),
+            },
+        );
+
+        expect(result.completed).toBe(false);
+        expect(result.stoppedReason).toBe("action_failed");
+        expect(executeCount).toBe(1);
     });
 });

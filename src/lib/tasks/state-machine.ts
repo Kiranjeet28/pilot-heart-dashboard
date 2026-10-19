@@ -12,15 +12,17 @@ const TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
     "planning",
     "paused",
     "completed",
+    "unverified",
     "failed",
     "cancelled",
   ],
   waiting_for_approval: ["running", "cancelled", "failed"],
   awaiting_approval: ["running", "cancelled", "failed"],
   awaiting_input: ["running", "cancelled", "failed"],
-  verifying: ["running", "completed", "failed", "cancelled"],
+  verifying: ["running", "completed", "unverified", "failed", "cancelled"],
   paused: ["queued", "planning", "running", "cancelled"],
   completed: [],
+  unverified: [],
   failed: [],
   cancelled: [],
 };
@@ -35,7 +37,7 @@ export const ACTIVE_STATUSES: TaskStatus[] = [
   "verifying",
   "paused",
 ];
-export const TERMINAL_STATUSES: TaskStatus[] = ["completed", "failed", "cancelled"];
+export const TERMINAL_STATUSES: TaskStatus[] = ["completed", "unverified", "failed", "cancelled"];
 
 export function canTransition(from: TaskStatus, to: TaskStatus): boolean {
   return TRANSITIONS[from].includes(to);
@@ -60,6 +62,7 @@ export const STATUS_LABEL: Record<TaskStatus, string> = {
   verifying: "Verifying",
   paused: "Paused",
   completed: "Completed",
+  unverified: "Unverified",
   failed: "Failed",
   cancelled: "Cancelled",
 };

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { computeStats, dailySeries } from "@/lib/dashboard-stats";
 import { searchPrompts, type SavedPrompt } from "@/lib/prompts";
-import { clampMinutes, clampRetries } from "@/store/app-store";
+import { clampMinutes } from "@/store/app-store";
 import type { Task, TaskStatus } from "@/lib/types";
 
 const task = (status: TaskStatus, createdAt = Date.now()): Task => ({
@@ -61,12 +61,9 @@ describe("prompt workspace", () => {
     expect(searchPrompts(list, "  ")).toHaveLength(2);
   });
 
-  it("clamps time limit to 1-30 minutes (default 10) and retries to 0-2 (default 2)", () => {
+  it("clamps the time limit to 1-30 minutes (default 10)", () => {
     expect(clampMinutes(undefined)).toBe(10);
     expect(clampMinutes(0)).toBe(1);
     expect(clampMinutes(120)).toBe(30);
-    expect(clampRetries(undefined)).toBe(2);
-    expect(clampRetries(5)).toBe(2);
-    expect(clampRetries(-1)).toBe(0);
   });
 });

@@ -19,7 +19,7 @@ export const LOCAL_SYSTEM =
   "Every key_press action MUST use exactly one of these keys: enter, tab, escape, backspace, delete, space, up, down, left, right, home, end, pageup, pagedown, ctrl+a, ctrl+c, ctrl+v, ctrl+z, ctrl+,, shift+home, shift+end, windows, windows+r, windows+e, windows+d. Do not add modifiers or invent shortcuts. Normalize win+r to windows+r. If no listed key can complete the task, return no steps and explain why. " +
   "Verification kinds: worker_ok, screen_capture, text_match (only with expectedText), clipboard (only after copy_selection). " +
   "Required JSON fields: top-level plan, summary, steps; each step action, requiresApproval; each action kind, targetId, description. Optional verification {kind}. " +
-  "If the objective is complete after this batch, include '[complete]' in the summary. No Markdown, code fences, or extra text.";
+  "If the objective is complete after this batch, start the summary with '[complete]'. Otherwise do not use that marker. No Markdown, code fences, or extra text.";
 
 /** Strict JSON schema the model must emit. Avoid anyOf — llama.cpp GBNF mishandles it. */
 export const PLAN_JSON_SCHEMA = {

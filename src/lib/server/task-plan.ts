@@ -29,18 +29,35 @@ export interface TaskPlanRequestInput {
   context?: string[] | undefined;
   modelOverride?: string | undefined;
   timeoutMs?: number | undefined;
+  /** Internal request cancellation signal; never accepted from a JSON body. */
+  signal?: AbortSignal | undefined;
 }
 
 const taskPlanRequestSchema = z.object({
   taskId: z.string().min(1).max(128).optional(),
   userRequest: z.string().min(1).max(4000),
   targetId: z.string().min(1).max(128).optional(),
-  providerId: z.string().min(1).max(128).optional(),
+  providerId: z.enum(["qwen", "gemini", "grok"]).optional(),
   profileId: z.string().min(1).max(128).optional(),
   context: z.array(z.string().min(1).max(500)).max(12).optional().default([]),
   modelOverride: z.string().min(1).max(128).optional(),
   timeoutMs: z.number().int().min(1000).max(600000).optional().default(300000),
 });
+
+function linkedTimeout(signal: AbortSignal | undefined, timeoutMs: number) {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener("abort", abort, { once: true });
+  const timer = setTimeout(abort, timeoutMs);
+  return {
+    controller,
+    cleanup() {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", abort);
+    },
+  };
+}
 
 function getServerToken(): string | null {
   const token = process.env["DESKTOPPILOT_SERVER_TOKEN"]?.trim();
@@ -187,8 +204,8 @@ async function generateGeminiTaskPlan(input: TaskPlanRequestInput): Promise<Prov
       status: 400,
     });
   }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), input.timeoutMs ?? 300000);
+  const request = linkedTimeout(input.signal, input.timeoutMs ?? 300000);
+  const controller = request.controller;
   try {
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
@@ -242,13 +259,15 @@ async function generateGeminiTaskPlan(input: TaskPlanRequestInput): Promise<Prov
       });
     }
   } catch (error) {
-    if (error && typeof error === "object" && "code" in error) throw error;
     if (controller.signal.aborted) {
-      throw Object.assign(new Error("Gemini planning request timed out."), { code: "timeout", status: 504 });
+      throw input.signal?.aborted
+        ? Object.assign(new Error("Gemini planning request was cancelled."), { code: "cancelled", status: 499 })
+        : Object.assign(new Error("Gemini planning request timed out."), { code: "timeout", status: 504 });
     }
+    if (error && typeof error === "object" && "code" in error) throw error;
     throw Object.assign(new Error("Could not reach the Gemini planning service."), { code: "network_error", status: 502 });
   } finally {
-    clearTimeout(timer);
+    request.cleanup();
   }
 }
 
@@ -269,8 +288,8 @@ async function generateGrokTaskPlan(input: TaskPlanRequestInput): Promise<Provid
     });
   }
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), input.timeoutMs ?? 300000);
+  const request = linkedTimeout(input.signal, input.timeoutMs ?? 300000);
+  const controller = request.controller;
   try {
     const response = await fetch("https://api.x.ai/v1/responses", {
       method: "POST",
@@ -340,19 +359,27 @@ async function generateGrokTaskPlan(input: TaskPlanRequestInput): Promise<Provid
       });
     }
   } catch (error) {
-    if (error && typeof error === "object" && "code" in error) throw error;
     if (controller.signal.aborted) {
-      throw Object.assign(new Error("Grok planning request timed out."), { code: "timeout", status: 504 });
+      throw input.signal?.aborted
+        ? Object.assign(new Error("Grok planning request was cancelled."), { code: "cancelled", status: 499 })
+        : Object.assign(new Error("Grok planning request timed out."), { code: "timeout", status: 504 });
     }
+    if (error && typeof error === "object" && "code" in error) throw error;
     throw Object.assign(new Error("Could not reach the Grok planning service."), { code: "network_error", status: 502 });
   } finally {
-    clearTimeout(timer);
+    request.cleanup();
   }
 }
 
 /** Selects the server-side Gemini route or the local llama-server route. */
 
 export async function generateTaskPlan(input: TaskPlanRequestInput): Promise<ProviderResult> {
+  if (input.providerId && !["qwen", "gemini", "grok"].includes(input.providerId)) {
+    throw Object.assign(new Error(`Unsupported AI provider: ${input.providerId}`), {
+      code: "invalid_request",
+      status: 400,
+    });
+  }
   if (input.providerId === "grok") return generateGrokTaskPlan(input);
   if (input.providerId === "gemini") return generateGeminiTaskPlan(input);
   const rawBase = "http://127.0.0.1:8081";
@@ -389,8 +416,8 @@ export async function generateTaskPlan(input: TaskPlanRequestInput): Promise<Pro
     prompt: string,
     maxTokens: number,
   ): Promise<unknown> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const request = linkedTimeout(input.signal, timeoutMs);
+    const controller = request.controller;
     const started = Date.now();
     let promptTokens: number | undefined;
     let generatedTokens: number | undefined;
@@ -487,11 +514,13 @@ export async function generateTaskPlan(input: TaskPlanRequestInput): Promise<Pro
         });
       }
     } catch (error) {
-      if (error && typeof error === "object" && "code" in error) {
-        throw error;
-      }
-
       if (controller.signal.aborted) {
+        if (input.signal?.aborted) {
+          throw Object.assign(new Error("Local Qwen planning request was cancelled."), {
+            code: "cancelled",
+            status: 499,
+          });
+        }
         logInferenceTiming({
           purpose,
           durationMs: Date.now() - started,
@@ -504,6 +533,9 @@ export async function generateTaskPlan(input: TaskPlanRequestInput): Promise<Pro
           code: "timeout",
           status: 504,
         });
+      }
+      if (error && typeof error === "object" && "code" in error) {
+        throw error;
       }
 
       logInferenceTiming({
@@ -519,7 +551,7 @@ export async function generateTaskPlan(input: TaskPlanRequestInput): Promise<Pro
         { code: "local_model_unavailable", status: 502 },
       );
     } finally {
-      clearTimeout(timer);
+      request.cleanup();
     }
   }
 
@@ -733,7 +765,7 @@ export async function handleTaskPlanRequest(request: Request): Promise<Response>
   }
 
   try {
-    const result = await generateTaskPlan(parsed.data);
+    const result = await generateTaskPlan({ ...parsed.data, signal: request.signal });
     if (
       parsed.data.targetId &&
       result.steps.some((step) => step.action.targetId !== parsed.data.targetId)
